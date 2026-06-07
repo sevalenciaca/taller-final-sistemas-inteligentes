@@ -1,0 +1,443 @@
+{
+  "name": "Procesamiento Facturas Electrónicas DIAN (Producción)",
+  "nodes": [
+    {
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "markAsRead",
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "id": "a1b2c3d4-1111-4000-a000-000000000001",
+      "name": "Email Trigger IMAP",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "imap": {
+          "id": "IMAP_CREDENTIAL_ID",
+          "name": "IMAP Facturación"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "condition-subject-pattern",
+              "leftValue": "={{ $json.subject }}",
+              "rightValue": "^\\d{8,10};.+;.+;\\d{2};.+$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            },
+            {
+              "id": "condition-has-attachments",
+              "leftValue": "={{ Object.keys($binary || {}).length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "a1b2c3d4-2222-4000-a000-000000000002",
+      "name": "Filtro Factura DIAN",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "decompress",
+        "binaryPropertyName": "attachment_0",
+        "outputFormat": "zip"
+      },
+      "id": "a1b2c3d4-3333-4000-a000-000000000003",
+      "name": "Descomprimir ZIP",
+      "type": "n8n-nodes-base.compression",
+      "typeVersion": 1,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// =============================================\n// PREPARAR ARCHIVOS EXTRAIDOS DEL ZIP\n// =============================================\n// La DIAN exige que las facturas electrónicas se\n// envíen como ZIP con un XML (la factura UBL 2.1)\n// y un PDF (representación gráfica).\n//\n// Este nodo:\n// 1. Busca los archivos .xml y .pdf en el ZIP descomprimido\n// 2. Extrae el contenido XML como texto (para enviarlo al LLM)\n// 3. Obtiene metadata del subject del correo (NIT, razón social, etc.)\n// =============================================\n\nconst items = $input.all();\nlet xmlContent = null;\nlet xmlFileName = null;\nlet pdfFileName = null;\nconst outputItems = [];\n\n// Obtener metadata del correo original\nconst emailData = $('Gmail Trigger').first().json;\nconst rawSubject = emailData.subject || '';\n\n// Limpiar prefijo \"Fwd:\" o \"Re:\" para extraer la parte NIT;Empresa;...\nconst nitMatch = rawSubject.match(/(\\d{8,10};.+)/);\nconst subject = nitMatch ? nitMatch[1] : rawSubject;\nconst subjectParts = subject.split(';');\n\nconst metadata = {\n  nit_emisor: subjectParts[0] || '',\n  razon_social_emisor: subjectParts[1] || '',\n  referencia_documento: subjectParts[2] || '',\n  tipo_documento: subjectParts[3] || '',\n  email_subject: rawSubject,\n  email_from: emailData.from || '',\n  email_date: emailData.date || ''\n};\n\n// Recorrer todos los archivos extraidos del ZIP\nfor (const item of items) {\n  const binaryKeys = Object.keys(item.binary || {});\n  \n  for (const key of binaryKeys) {\n    const binaryData = item.binary[key];\n    const fileName = binaryData.fileName || '';\n    \n    if (fileName.toLowerCase().endsWith('.xml')) {\n      xmlFileName = fileName;\n      // Convertir el binario a texto UTF-8 para poder leer el XML\n      const buffer = Buffer.from(binaryData.data, 'base64');\n      xmlContent = buffer.toString('utf-8');\n      \n      outputItems.push({\n        json: { fileType: 'xml', fileName, xmlContent, ...metadata },\n        binary: { data: binaryData }\n      });\n    } else if (fileName.toLowerCase().endsWith('.pdf')) {\n      pdfFileName = fileName;\n      outputItems.push({\n        json: { fileType: 'pdf', fileName, ...metadata },\n        binary: { data: binaryData }\n      });\n    }\n  }\n}\n\nif (outputItems.length === 0) {\n  return [{ json: { error: 'No se encontraron archivos XML o PDF en el ZIP' } }];\n}\n\nreturn outputItems;"
+      },
+      "id": "a1b2c3d4-4444-4000-a000-000000000004",
+      "name": "Preparar Archivos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "name": "={{ $json.fileName }}",
+        "folderId": "GOOGLE_DRIVE_FOLDER_ID",
+        "options": {}
+      },
+      "id": "a1b2c3d4-5555-4000-a000-000000000005",
+      "name": "Subir a Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        880,
+        0
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GOOGLE_DRIVE_CREDENTIAL_ID",
+          "name": "Google Drive Facturación"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =============================================\n// COMBINAR DATOS PARA EL LLM\n// =============================================\n// Después de subir los archivos a Google Drive,\n// este nodo:\n// 1. Recupera los links de Drive (para guardarlos en Sheets)\n// 2. Recupera el contenido XML (para enviárselo a Claude)\n// 3. Lo trunca a 100K chars si es demasiado largo\n// =============================================\n\nconst driveResults = $input.all();\nconst prepareNode = $('Preparar Archivos').all();\n\n// Obtener links de Google Drive\nlet pdfLink = '';\nlet xmlLink = '';\n\nfor (const result of driveResults) {\n  const name = result.json.name || '';\n  if (name.toLowerCase().endsWith('.pdf')) {\n    pdfLink = result.json.webViewLink || 'https://drive.google.com/file/d/' + result.json.id + '/view';\n  } else if (name.toLowerCase().endsWith('.xml')) {\n    xmlLink = result.json.webViewLink || 'https://drive.google.com/file/d/' + result.json.id + '/view';\n  }\n}\n\n// Recuperar el contenido XML y metadata\nlet xmlContent = '';\nlet metadata = {};\n\nfor (const item of prepareNode) {\n  if (item.json.xmlContent) xmlContent = item.json.xmlContent;\n  if (item.json.nit_emisor) {\n    metadata = {\n      nit_emisor: item.json.nit_emisor,\n      razon_social_emisor: item.json.razon_social_emisor,\n      referencia_documento: item.json.referencia_documento,\n      email_from: item.json.email_from,\n      email_date: item.json.email_date\n    };\n  }\n}\n\n// Truncar XML si excede el límite del LLM\nconst maxLen = 100000;\nconst xmlForLlm = xmlContent.length > maxLen\n  ? xmlContent.substring(0, maxLen) + '\\n<!-- TRUNCADO -->'\n  : xmlContent;\n\nreturn [{\n  json: { xmlContent: xmlForLlm, pdfLink, xmlLink, ...metadata }\n}];"
+      },
+      "id": "a1b2c3d4-6666-4000-a000-000000000006",
+      "name": "Combinar Datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "prompt": "=Eres un extractor de datos de facturas electrónicas colombianas en formato UBL 2.1 (estándar DIAN).\n\nRecibirás el contenido XML de una factura electrónica. Extrae ÚNICAMENTE los siguientes campos y devuelve un objeto JSON válido, sin markdown, sin explicaciones, solo el JSON:\n\n{\n  \"numero_factura\": \"string — atributo ID del elemento Invoice\",\n  \"fecha_emision\": \"string ISO 8601 — IssueDate\",\n  \"razon_social_proveedor\": \"string — AccountingSupplierParty > Party > PartyName > Name\",\n  \"nit_proveedor\": \"string — AccountingSupplierParty > Party > PartyTaxScheme > CompanyID (sin dígito de verificación)\",\n  \"dv_proveedor\": \"string — dígito de verificación del NIT\",\n  \"razon_social_cliente\": \"string — AccountingCustomerParty > Party > PartyName > Name\",\n  \"nit_cliente\": \"string — AccountingCustomerParty > Party > PartyTaxScheme > CompanyID\",\n  \"subtotal\": \"number\",\n  \"total_iva\": \"number\",\n  \"total_factura\": \"number\",\n  \"moneda\": \"string — DocumentCurrencyCode\",\n  \"cufe\": \"string — UUID del elemento cbc:UUID\",\n  \"condicion_pago\": \"string — PaymentMeans > PaymentMeansCode\",\n  \"forma_pago\": \"string — Contado o Crédito\"\n}\n\nSi un campo no existe en el XML, usa null. Nunca inventes datos.\n\nXML de la factura:\n\n{{ $json.xmlContent }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-7777-4000-a000-000000000007",
+      "name": "Extraer Datos Factura",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-20250514",
+        "options": {
+          "temperature": 0,
+          "maxTokensToSample": 2048
+        }
+      },
+      "id": "a1b2c3d4-7778-4000-a000-000000000008",
+      "name": "Anthropic Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.2,
+      "position": [
+        1340,
+        220
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =============================================\n// PARSEAR RESPUESTA DE CLAUDE\n// =============================================\n// Claude nos devuelve un JSON con los datos de la factura\n// pero como string. Este nodo:\n// 1. Limpia la respuesta (quita markdown si hay)\n// 2. Parsea el JSON\n// 3. Construye la fila final para Google Sheets\n// =============================================\n\nconst llmResponse = $input.first().json;\nconst prevData = $('Combinar Datos').first().json;\n\n// Obtener el texto de la respuesta del LLM\nlet responseText = llmResponse.text || llmResponse.response || llmResponse.output || JSON.stringify(llmResponse);\n\n// Limpiar posible wrapping de markdown (```json ... ```)\nresponseText = responseText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n\nlet facturaData = {};\ntry {\n  facturaData = JSON.parse(responseText);\n} catch (e) {\n  // Si falla, intentar extraer el JSON del texto\n  const jsonMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    try {\n      facturaData = JSON.parse(jsonMatch[0]);\n    } catch (e2) {\n      return [{ json: { error: 'No se pudo parsear la respuesta del LLM', raw: responseText } }];\n    }\n  } else {\n    return [{ json: { error: 'No se encontró JSON en la respuesta', raw: responseText } }];\n  }\n}\n\n// Construir la fila para Google Sheets\nreturn [{ json: {\n  fecha_procesamiento: new Date().toISOString(),\n  numero_factura: facturaData.numero_factura || '',\n  fecha_emision: facturaData.fecha_emision || '',\n  razon_social_proveedor: facturaData.razon_social_proveedor || '',\n  nit_proveedor: facturaData.nit_proveedor || '',\n  dv_proveedor: facturaData.dv_proveedor || '',\n  razon_social_cliente: facturaData.razon_social_cliente || '',\n  nit_cliente: facturaData.nit_cliente || '',\n  subtotal: facturaData.subtotal || 0,\n  total_iva: facturaData.total_iva || 0,\n  total_factura: facturaData.total_factura || 0,\n  moneda: facturaData.moneda || 'COP',\n  cufe: facturaData.cufe || '',\n  condicion_pago: facturaData.condicion_pago || '',\n  forma_pago: facturaData.forma_pago || '',\n  link_pdf: prevData.pdfLink || '',\n  link_xml: prevData.xmlLink || '',\n  email_origen: prevData.email_from || '',\n  fecha_email: prevData.email_date || '',\n  referencia: prevData.referencia_documento || ''\n} }];"
+      },
+      "id": "a1b2c3d4-8888-4000-a000-000000000009",
+      "name": "Parsear Respuesta LLM",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Facturas",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-9999-4000-a000-000000000010",
+      "name": "Registrar en Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1760,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets Facturación"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 🏭 FLUJO REAL — Procesamiento de Facturas DIAN\n\n**Caso de uso:** Automatizar la lectura de facturas electrónicas que llegan al correo de Suprokom S.A.S (empresa real de Manizales).\n\n**¿Qué hace?**\n1. Detecta correos con facturas electrónicas en Gmail\n2. Filtra solo los que tienen el formato estándar DIAN\n3. Descomprime el ZIP adjunto (XML + PDF)\n4. Sube los archivos a Google Drive\n5. Usa IA (Claude) para extraer los datos del XML\n6. Registra todo en una hoja de Google Sheets\n\n**Credenciales necesarias:**\n- Gmail OAuth2\n- Google Drive OAuth2\n- Google Sheets OAuth2\n- Anthropic API Key\n\n**Formato del subject esperado:**\n`NIT;RazonSocial;Referencia;Tipo;RazonSocial`\nEjemplo: `890801339;MANISOL S.A.S;A6513281;01;MANISOL S.A.S`\n\n**Proveedores de FE soportados:**\n- Siigo (factura@transaccionesco.siigo.net)\n- Carvajal TyS (FacturaCTSColombia@cen.biz)\n- Cualquier otro que siga el estándar DIAN UBL 2.1",
+        "width": 500,
+        "height": 620
+      },
+      "id": "note-0001-0000-0000-000000000001",
+      "name": "Descripción General",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -200,
+        -400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 📨 PASO 1: Recibir Correo\n\nEl trigger de Gmail revisa el buzón **cada minuto** buscando correos nuevos.\n\nDescarga automáticamente los adjuntos (el ZIP con la factura).\n\n**Nota:** El correo puede ser directo del proveedor o un reenvío (Fwd:) desde el correo empresarial.",
+        "width": 300,
+        "height": 230
+      },
+      "id": "note-0002-0000-0000-000000000002",
+      "name": "Nota Trigger",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -170
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 🔍 PASO 2: Filtrar\n\nSolo pasan correos que:\n- Tienen el patrón NIT;Empresa;Ref;Tipo en el subject\n- Tienen al menos un adjunto\n\nSi el correo no es una factura, el flujo se detiene aquí sin errores.",
+        "width": 300,
+        "height": 200
+      },
+      "id": "note-0003-0000-0000-000000000003",
+      "name": "Nota Filtro",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        180,
+        -170
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 📦 PASO 3: Descomprimir\n\nLa DIAN exige que las facturas electrónicas se envíen como archivo ZIP.\nDentro hay:\n- **XML** → La factura en formato UBL 2.1 (datos estructurados)\n- **PDF** → Representación gráfica de la factura",
+        "width": 300,
+        "height": 200
+      },
+      "id": "note-0004-0000-0000-000000000004",
+      "name": "Nota ZIP",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        400,
+        -170
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 🗂️ PASOS 4-5: Archivos y Drive\n\nSe identifican los archivos XML y PDF extraídos del ZIP y se suben a Google Drive para tener respaldo y links accesibles desde la hoja de cálculo.",
+        "width": 350,
+        "height": 140
+      },
+      "id": "note-0005-0000-0000-000000000005",
+      "name": "Nota Drive",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        620,
+        -170
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 🤖 PASOS 6-7: Extracción con IA\n\n**Claude (Anthropic)** recibe el XML completo de la factura UBL 2.1 y extrae los campos clave:\n- Número de factura, fecha, CUFE\n- NIT y razón social del proveedor y cliente\n- Subtotal, IVA, total\n- Forma de pago\n\n**Temperatura: 0** → Para que no invente datos.\n\nEl nodo \"Parsear Respuesta\" limpia el JSON que devuelve Claude y lo estructura para guardarlo.",
+        "width": 400,
+        "height": 270
+      },
+      "id": "note-0006-0000-0000-000000000006",
+      "name": "Nota LLM",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        -170
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 📊 PASO 8: Guardar en Sheets\n\nTodos los datos extraídos se registran como una nueva fila en Google Sheets, incluyendo:\n- Datos de la factura\n- Links al PDF y XML en Drive\n- Fecha de procesamiento\n\nEsto permite tener un **registro centralizado** de todas las facturas recibidas.",
+        "width": 300,
+        "height": 220
+      },
+      "id": "note-0007-0000-0000-000000000007",
+      "name": "Nota Sheets",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1700,
+        -170
+      ]
+    }
+  ],
+  "connections": {
+    "Email Trigger IMAP": {
+      "main": [
+        [
+          {
+            "node": "Filtro Factura DIAN",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtro Factura DIAN": {
+      "main": [
+        [
+          {
+            "node": "Descomprimir ZIP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descomprimir ZIP": {
+      "main": [
+        [
+          {
+            "node": "Preparar Archivos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Archivos": {
+      "main": [
+        [
+          {
+            "node": "Subir a Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subir a Google Drive": {
+      "main": [
+        [
+          {
+            "node": "Combinar Datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combinar Datos": {
+      "main": [
+        [
+          {
+            "node": "Extraer Datos Factura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Datos Factura": {
+      "main": [
+        [
+          {
+            "node": "Parsear Respuesta LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear Respuesta LLM": {
+      "main": [
+        [
+          {
+            "node": "Registrar en Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Claude": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extraer Datos Factura",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "placeholder"
+  },
+  "tags": [
+    {
+      "name": "producción",
+      "id": "1"
+    },
+    {
+      "name": "DIAN",
+      "id": "2"
+    },
+    {
+      "name": "facturación",
+      "id": "3"
+    }
+  ]
+}
