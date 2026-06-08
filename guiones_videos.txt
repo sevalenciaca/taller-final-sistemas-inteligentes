@@ -111,31 +111,69 @@ autónomo."
 ---
 ---
 
-## VIDEO 3 (OPCIONAL): Lógica Difusa (2-3 min, puede incluirse al final del video de LangChain)
+## VIDEO 3 (OPCIONAL): Lógica Difusa (3-4 min, puede incluirse al final del video de LangChain)
 
 ### [0:00 - 0:30] INTRO
-"Finalmente, el Nivel 3: integramos lógica difusa para priorizar las facturas."
+"Finalmente, el Nivel 3: integramos lógica difusa para priorizar el pago 
+de las facturas que ya fueron extraídas por el agente LangChain. 
+La idea es que el sistema decida automáticamente cuáles facturas pagar primero,
+replicando el razonamiento de un tesorero humano pero sin ambigüedad."
 
-### [0:30 - 1:30] MOSTRAR EL SISTEMA
-- Ejecutar las celdas del notebook de lógica difusa
-- Mostrar las gráficas de funciones de membresía
+### [0:30 - 1:00] JUSTIFICACIÓN
+- Mostrar la celda 1 del notebook (markdown con la justificación)
 
-"Tenemos 2 variables de entrada: el monto y los días desde la emisión.
-7 reglas IF-THEN que replican el razonamiento de un tesorero.
-Por ejemplo: si el monto es alto Y la urgencia es alta, la prioridad es crítica."
+"¿Por qué lógica difusa? Porque la decisión de priorizar un pago no es binaria.
+Un monto 'alto' no tiene un umbral exacto, y la urgencia es gradual. 
+La lógica difusa nos permite modelar esta incertidumbre con conjuntos difusos
+y reglas lingüísticas, igual que razonaría una persona."
 
-### [1:30 - 2:30] RESULTADO
-- Mostrar la tabla priorizada
-- Mostrar la gráfica de barras
-- Mostrar la superficie de control 3D
+### [1:00 - 1:45] MOSTRAR VARIABLES Y FUNCIONES DE MEMBRESÍA
+- Mostrar la celda donde se definen las variables (celda 4)
+- Mostrar la gráfica de funciones de membresía (celda 5) — las 3 subfiguras
 
-"El resultado: las facturas ahora están ordenadas por prioridad de pago.
-La factura LP123 de $450,000 con 19 días tiene prioridad CRÍTICA,
-mientras que QC92 de $13,000 reciente es BAJA."
+"Definimos 2 variables de entrada:
+- Monto: de 0 a 500,000 pesos, con 3 conjuntos → baja, media, alta
+- Urgencia: de 0 a 30 días desde la emisión, con 3 conjuntos → baja, media, alta
 
-### [2:30 - 3:00] CIERRE
-"El sistema difuso se integra como post-procesador del agente: lee el CSV
-que genera LangChain y agrega la columna de prioridad."
+Y una variable de salida:
+- Prioridad: de 0 a 100, con 4 conjuntos → baja, media, alta y crítica
+
+Las funciones de membresía son trapezoidales en los extremos y triangulares 
+en el centro. Aquí pueden ver las curvas para cada variable."
+
+### [1:45 - 2:15] REGLAS IF-THEN
+- Mostrar la celda de reglas (celda 6) con los prints
+
+"El sistema tiene 7 reglas IF-THEN que cubren las combinaciones relevantes.
+Por ejemplo:
+- Regla 1: Si el monto es ALTO y la urgencia es ALTA → prioridad CRÍTICA
+- Regla 4: Si el monto es MEDIO y la urgencia es MEDIA → prioridad MEDIA
+- Regla 7: Si el monto es BAJO y la urgencia es BAJA → prioridad BAJA
+
+El operador AND se resuelve con el mínimo, y la desfusificación usa el centroide."
+
+### [2:15 - 3:00] RESULTADO Y TRAZABILIDAD
+- Mostrar la tabla priorizada (DataFrame ordenado por score)
+- Mostrar la gráfica de barras con colores rojo/naranja/amarillo/verde
+- Mostrar brevemente la superficie de control 3D
+
+"Aquí está el resultado sobre las facturas reales del agente:
+- LP123 de $450,000 con 19 días → score 78.2, prioridad CRÍTICA (en rojo)
+- FE14022 de $250,000 con 2 días → score 42.5, prioridad MEDIA (en amarillo)
+- QC92 de $13,000 con 2 días → score 18.7, prioridad BAJA (en verde)
+
+La superficie 3D muestra cómo varía la prioridad en función de monto y urgencia.
+Y en la celda de trazabilidad pueden ver paso a paso: la fusificación,
+qué reglas se activaron y cómo el centroide calculó el score final."
+
+### [3:00 - 3:30] INTEGRACIÓN Y CIERRE
+- Señalar cómo se conecta con el Nivel 2
+
+"Sin lógica difusa, las facturas quedarían en orden de llegada — FIFO.
+Con este módulo, se ordenan por urgencia real combinando monto y tiempo.
+El sistema lee el CSV que exporta el agente LangChain y le agrega la columna 
+de prioridad. En producción, esto reduciría el riesgo de mora en facturas 
+de alto monto. Eso es todo para el Nivel 3."
 
 ---
 ---
