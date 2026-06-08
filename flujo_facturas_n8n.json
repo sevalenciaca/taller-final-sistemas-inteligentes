@@ -9,7 +9,7 @@
       "typeVersion": 1,
       "position": [
         0,
-        400
+        300
       ]
     },
     {
@@ -29,22 +29,37 @@
       "typeVersion": 1.2,
       "position": [
         0,
-        600
+        520
       ]
     },
     {
       "parameters": {
         "mailbox": "INBOX",
         "postProcessAction": "read",
-        "options": {}
+        "options": {
+          "customEmailConfig": [
+            {
+              "property": "host",
+              "value": "mail.suprokom.com"
+            },
+            {
+              "property": "port",
+              "value": "993"
+            },
+            {
+              "property": "secure",
+              "value": "true"
+            }
+          ]
+        }
       },
       "id": "imap-read",
       "name": "Leer Correos IMAP",
       "type": "n8n-nodes-base.emailReadImap",
       "typeVersion": 2,
       "position": [
-        280,
-        500
+        300,
+        400
       ],
       "credentials": {
         "imap": {
@@ -55,61 +70,61 @@
     },
     {
       "parameters": {
-        "operation": "decompress",
-        "binaryPropertyName": "attachment_0",
-        "outputPrefix": "extracted_"
+        "jsCode": "// Procesar adjuntos de cada correo\nconst items = [];\n\nfor (const item of $input.all()) {\n  const binaries = item.binary || {};\n  \n  // Buscar adjuntos ZIP\n  for (const [key, binaryData] of Object.entries(binaries)) {\n    if (binaryData.fileName && binaryData.fileName.toLowerCase().endsWith('.zip')) {\n      items.push({\n        json: {\n          email_from: item.json.from?.text || item.json.from || 'Desconocido',\n          email_subject: item.json.subject || 'Sin asunto',\n          email_date: item.json.date || 'Sin fecha',\n          attachment_name: binaryData.fileName,\n          has_zip: true\n        },\n        binary: {\n          zip_file: binaryData\n        }\n      });\n    }\n  }\n}\n\nif (items.length === 0) {\n  items.push({ json: { message: 'No se encontraron adjuntos ZIP', has_zip: false } });\n}\n\nreturn items;"
       },
-      "id": "decompress-zip",
-      "name": "Descomprimir ZIP",
-      "type": "n8n-nodes-base.compression",
-      "typeVersion": 1,
-      "position": [
-        540,
-        500
-      ]
-    },
-    {
-      "parameters": {
-        "mode": "binaryToJson",
-        "binaryPropertyName": "extracted_0",
-        "options": {
-          "encoding": "utf-8"
-        }
-      },
-      "id": "binary-to-text",
-      "name": "XML a Texto",
-      "type": "n8n-nodes-base.moveBinaryData",
-      "typeVersion": 1.1,
-      "position": [
-        780,
-        500
-      ]
-    },
-    {
-      "parameters": {
-        "mode": "xmlToJson",
-        "dataPropertyName": "data"
-      },
-      "id": "xml-parse",
-      "name": "Parsear XML",
-      "type": "n8n-nodes-base.xml",
-      "typeVersion": 1,
-      "position": [
-        1020,
-        500
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Extraer campos de la factura parseada (JSON puro, sin módulos externos)\nconst results = [];\n\nfor (const item of $input.all()) {\n  try {\n    const data = item.json.data || item.json;\n    \n    let nit = 'N/A';\n    let razonSocial = 'N/A';\n    let numFactura = 'N/A';\n    let fecha = 'N/A';\n    let total = 0;\n    let descripcion = 'N/A';\n    \n    // Detectar AttachedDocument o Invoice\n    const doc = data.AttachedDocument || data['AttachedDocument'];\n    const inv = data.Invoice || data['Invoice'];\n    \n    if (doc) {\n      // Formato AttachedDocument (factura electrónica colombiana)\n      numFactura = doc.ID?.[0] || doc.ID || 'N/A';\n      fecha = doc.IssueDate?.[0] || doc.IssueDate || 'N/A';\n      \n      // SenderParty\n      const sender = doc.SenderParty?.[0] || doc.SenderParty;\n      if (sender) {\n        const taxScheme = sender.PartyTaxScheme?.[0] || sender.PartyTaxScheme;\n        if (taxScheme) {\n          const compId = taxScheme.CompanyID?.[0] || taxScheme.CompanyID;\n          nit = typeof compId === 'object' ? (compId._ || compId['#text'] || JSON.stringify(compId)) : (compId || 'N/A');\n          razonSocial = taxScheme.RegistrationName?.[0] || taxScheme.RegistrationName || 'N/A';\n        }\n      }\n      \n      // Intentar extraer total de la factura embebida\n      // La factura embebida está como texto en Attachment.ExternalReference.Description\n      // Pero ya parseada por el nodo XML, podría estar como objeto\n      const attachment = doc.Attachment?.[0] || doc.Attachment;\n      if (attachment) {\n        const extRef = attachment.ExternalReference?.[0] || attachment.ExternalReference;\n        if (extRef) {\n          const descContent = extRef.Description?.[0] || extRef.Description;\n          // Si el nodo XML parseó la factura embebida\n          if (typeof descContent === 'object' && descContent.Invoice) {\n            const embInv = descContent.Invoice;\n            const lmt = embInv.LegalMonetaryTotal?.[0] || embInv.LegalMonetaryTotal;\n            if (lmt) {\n              const payable = lmt.PayableAmount?.[0] || lmt.PayableAmount;\n              total = parseFloat(typeof payable === 'object' ? (payable._ || payable['#text'] || 0) : payable) || 0;\n            }\n            // Descripción\n            let line = embInv.InvoiceLine;\n            if (Array.isArray(line)) line = line[0];\n            if (line) {\n              const lineItem = line.Item?.[0] || line.Item;\n              if (lineItem) {\n                descripcion = lineItem.Description?.[0] || lineItem.Description || lineItem.Name?.[0] || lineItem.Name || 'N/A';\n              }\n            }\n          }\n        }\n      }\n    } else if (inv) {\n      // Invoice directo\n      numFactura = inv.ID?.[0] || inv.ID || 'N/A';\n      fecha = inv.IssueDate?.[0] || inv.IssueDate || 'N/A';\n      \n      const supplier = inv.AccountingSupplierParty?.[0]?.Party?.[0] || inv.AccountingSupplierParty?.Party;\n      if (supplier) {\n        const taxScheme = supplier.PartyTaxScheme?.[0] || supplier.PartyTaxScheme;\n        if (taxScheme) {\n          const compId = taxScheme.CompanyID?.[0] || taxScheme.CompanyID;\n          nit = typeof compId === 'object' ? (compId._ || compId['#text'] || 'N/A') : (compId || 'N/A');\n          razonSocial = taxScheme.RegistrationName?.[0] || taxScheme.RegistrationName || 'N/A';\n        }\n      }\n      \n      const lmt = inv.LegalMonetaryTotal?.[0] || inv.LegalMonetaryTotal;\n      if (lmt) {\n        const payable = lmt.PayableAmount?.[0] || lmt.PayableAmount;\n        total = parseFloat(typeof payable === 'object' ? (payable._ || payable['#text'] || 0) : payable) || 0;\n      }\n      \n      let line = inv.InvoiceLine;\n      if (Array.isArray(line)) line = line[0];\n      if (line) {\n        const lineItem = line.Item?.[0] || line.Item;\n        if (lineItem) {\n          descripcion = lineItem.Description?.[0] || lineItem.Description || lineItem.Name?.[0] || lineItem.Name || 'N/A';\n        }\n      }\n    }\n    \n    results.push({\n      json: {\n        nit_emisor: String(nit).trim(),\n        razon_social: String(razonSocial).trim(),\n        numero_factura: String(numFactura).trim(),\n        fecha_emision: String(fecha).trim(),\n        valor_total: total,\n        descripcion: String(descripcion).trim(),\n        procesado_en: new Date().toISOString()\n      }\n    });\n  } catch (error) {\n    results.push({\n      json: {\n        nit_emisor: 'N/A',\n        razon_social: 'N/A',\n        numero_factura: 'N/A',\n        fecha_emision: 'N/A',\n        valor_total: 0,\n        descripcion: 'N/A',\n        error: error.message,\n        procesado_en: new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn results;"
-      },
-      "id": "extract-fields",
-      "name": "Extraer Datos Factura",
+      "id": "extract-attachments",
+      "name": "Extraer Adjuntos ZIP",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1260,
-        500
+        540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-zip",
+              "leftValue": "={{ $json.has_zip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-zip",
+      "name": "¿Tiene ZIP?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        760,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const JSZip = require('jszip');\nconst { parseStringPromise } = require('xml2js');\n\nconst results = [];\n\nfor (const item of $input.all()) {\n  try {\n    // Obtener el buffer del ZIP\n    const zipBuffer = await this.helpers.getBinaryDataBuffer(item, 'zip_file');\n    const zip = await JSZip.loadAsync(zipBuffer);\n    \n    let xmlContent = null;\n    let pdfFileName = null;\n    let xmlFileName = null;\n    \n    // Buscar XML y PDF dentro del ZIP\n    for (const [filename, file] of Object.entries(zip.files)) {\n      if (filename.toLowerCase().endsWith('.xml')) {\n        xmlContent = await file.async('text');\n        xmlFileName = filename;\n      }\n      if (filename.toLowerCase().endsWith('.pdf')) {\n        pdfFileName = filename;\n      }\n    }\n    \n    if (!xmlContent) {\n      results.push({\n        json: {\n          ...item.json,\n          error: 'No se encontró XML en el ZIP',\n          nit_emisor: 'N/A',\n          razon_social: 'N/A',\n          numero_factura: 'N/A',\n          fecha_emision: 'N/A',\n          valor_total: 0,\n          descripcion: 'N/A'\n        }\n      });\n      continue;\n    }\n    \n    // Parsear XML\n    const parsed = await parseStringPromise(xmlContent, {\n      explicitArray: false,\n      ignoreAttrs: false,\n      tagNameProcessors: [(name) => name.split(':').pop()]\n    });\n    \n    // Detectar si es AttachedDocument o Invoice\n    const root = parsed.AttachedDocument || parsed.Invoice || parsed;\n    let invoiceData = null;\n    \n    let nit = 'N/A';\n    let razonSocial = 'N/A';\n    let numFactura = 'N/A';\n    let fecha = 'N/A';\n    let total = 0;\n    let descripcion = 'N/A';\n    \n    if (parsed.AttachedDocument) {\n      // Formato AttachedDocument (factura colombiana)\n      const doc = parsed.AttachedDocument;\n      numFactura = doc.ID || doc.ParentDocumentID || 'N/A';\n      fecha = doc.IssueDate || 'N/A';\n      \n      // SenderParty\n      const sender = doc.SenderParty;\n      if (sender && sender.PartyTaxScheme) {\n        nit = sender.PartyTaxScheme.CompanyID?._  || sender.PartyTaxScheme.CompanyID || 'N/A';\n        razonSocial = sender.PartyTaxScheme.RegistrationName || 'N/A';\n      }\n      \n      // Factura embebida en Attachment\n      const attachment = doc.Attachment;\n      if (attachment && attachment.ExternalReference && attachment.ExternalReference.Description) {\n        try {\n          const embeddedXml = attachment.ExternalReference.Description;\n          const embeddedParsed = await parseStringPromise(embeddedXml, {\n            explicitArray: false,\n            ignoreAttrs: false,\n            tagNameProcessors: [(name) => name.split(':').pop()]\n          });\n          \n          const invoice = embeddedParsed.Invoice;\n          if (invoice) {\n            // Total\n            if (invoice.LegalMonetaryTotal) {\n              const lmt = invoice.LegalMonetaryTotal;\n              const payable = lmt.PayableAmount?._ || lmt.PayableAmount || '0';\n              total = parseFloat(payable) || 0;\n            }\n            \n            // Descripción primer item\n            let invoiceLine = invoice.InvoiceLine;\n            if (invoiceLine) {\n              if (Array.isArray(invoiceLine)) invoiceLine = invoiceLine[0];\n              if (invoiceLine.Item) {\n                descripcion = invoiceLine.Item.Description || invoiceLine.Item.Name || 'N/A';\n              }\n            }\n          }\n        } catch(e) {\n          // Error al parsear factura embebida\n        }\n      }\n    } else if (parsed.Invoice) {\n      // Invoice directo\n      const inv = parsed.Invoice;\n      numFactura = inv.ID || 'N/A';\n      fecha = inv.IssueDate || 'N/A';\n      \n      const supplier = inv.AccountingSupplierParty?.Party;\n      if (supplier) {\n        const taxScheme = supplier.PartyTaxScheme;\n        if (taxScheme) {\n          nit = taxScheme.CompanyID?._ || taxScheme.CompanyID || 'N/A';\n          razonSocial = taxScheme.RegistrationName || 'N/A';\n        }\n        if (razonSocial === 'N/A' && supplier.PartyLegalEntity) {\n          razonSocial = supplier.PartyLegalEntity.RegistrationName || 'N/A';\n        }\n      }\n      \n      if (inv.LegalMonetaryTotal) {\n        const payable = inv.LegalMonetaryTotal.PayableAmount?._ || inv.LegalMonetaryTotal.PayableAmount || '0';\n        total = parseFloat(payable) || 0;\n      }\n      \n      let invoiceLine = inv.InvoiceLine;\n      if (invoiceLine) {\n        if (Array.isArray(invoiceLine)) invoiceLine = invoiceLine[0];\n        if (invoiceLine.Item) {\n          descripcion = invoiceLine.Item.Description || invoiceLine.Item.Name || 'N/A';\n        }\n      }\n    }\n    \n    results.push({\n      json: {\n        nit_emisor: nit,\n        razon_social: razonSocial,\n        numero_factura: numFactura,\n        fecha_emision: fecha,\n        valor_total: total,\n        descripcion: descripcion,\n        archivo_pdf: pdfFileName || 'No encontrado',\n        archivo_xml: xmlFileName || 'No encontrado',\n        email_from: item.json.email_from,\n        email_subject: item.json.email_subject,\n        email_date: item.json.email_date\n      }\n    });\n    \n  } catch (error) {\n    results.push({\n      json: {\n        ...item.json,\n        error: `Error procesando: ${error.message}`,\n        nit_emisor: 'N/A',\n        razon_social: 'N/A',\n        numero_factura: 'N/A',\n        fecha_emision: 'N/A',\n        valor_total: 0,\n        descripcion: 'N/A'\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "parse-xml",
+      "name": "Descomprimir ZIP y Parsear XML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        340
       ]
     },
     {
@@ -135,8 +150,8 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        1500,
-        500
+        1260,
+        340
       ],
       "credentials": {
         "googleSheetsOAuth2Api": {
@@ -144,6 +159,29 @@
           "name": "Google Sheets OAuth"
         }
       }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "no-zip",
+              "name": "mensaje",
+              "value": "=Correo sin adjuntos ZIP procesables",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "no-zip-output",
+      "name": "Sin ZIP",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1000,
+        520
+      ]
     }
   ],
   "connections": {
@@ -173,47 +211,43 @@
       "main": [
         [
           {
-            "node": "Descomprimir ZIP",
+            "node": "Extraer Adjuntos ZIP",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Descomprimir ZIP": {
+    "Extraer Adjuntos ZIP": {
       "main": [
         [
           {
-            "node": "XML a Texto",
+            "node": "¿Tiene ZIP?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "XML a Texto": {
+    "¿Tiene ZIP?": {
       "main": [
         [
           {
-            "node": "Parsear XML",
+            "node": "Descomprimir ZIP y Parsear XML",
             "type": "main",
             "index": 0
           }
-        ]
-      ]
-    },
-    "Parsear XML": {
-      "main": [
+        ],
         [
           {
-            "node": "Extraer Datos Factura",
+            "node": "Sin ZIP",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Extraer Datos Factura": {
+    "Descomprimir ZIP y Parsear XML": {
       "main": [
         [
           {
