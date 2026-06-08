@@ -1,0 +1,238 @@
+{
+  "name": "Agente Facturación Electrónica",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-manual",
+      "name": "Disparador Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "trigger-cron",
+      "name": "Cada 5 Minutos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "read",
+        "options": {}
+      },
+      "id": "imap-read",
+      "name": "Leer Correos IMAP",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [
+        280,
+        500
+      ],
+      "credentials": {
+        "imap": {
+          "id": "IMAP_CREDENTIAL_ID",
+          "name": "Facturación Suprokom IMAP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "decompress",
+        "binaryPropertyName": "attachment_0",
+        "outputPrefix": "extracted_"
+      },
+      "id": "decompress-zip",
+      "name": "Descomprimir ZIP",
+      "type": "n8n-nodes-base.compression",
+      "typeVersion": 1,
+      "position": [
+        540,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "binaryToJson",
+        "binaryPropertyName": "extracted_0",
+        "options": {
+          "encoding": "utf-8"
+        }
+      },
+      "id": "binary-to-text",
+      "name": "XML a Texto",
+      "type": "n8n-nodes-base.moveBinaryData",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "xmlToJson",
+        "dataPropertyName": "data"
+      },
+      "id": "xml-parse",
+      "name": "Parsear XML",
+      "type": "n8n-nodes-base.xml",
+      "typeVersion": 1,
+      "position": [
+        1020,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraer campos de la factura parseada (JSON puro, sin módulos externos)\nconst results = [];\n\nfor (const item of $input.all()) {\n  try {\n    const data = item.json.data || item.json;\n    \n    let nit = 'N/A';\n    let razonSocial = 'N/A';\n    let numFactura = 'N/A';\n    let fecha = 'N/A';\n    let total = 0;\n    let descripcion = 'N/A';\n    \n    // Detectar AttachedDocument o Invoice\n    const doc = data.AttachedDocument || data['AttachedDocument'];\n    const inv = data.Invoice || data['Invoice'];\n    \n    if (doc) {\n      // Formato AttachedDocument (factura electrónica colombiana)\n      numFactura = doc.ID?.[0] || doc.ID || 'N/A';\n      fecha = doc.IssueDate?.[0] || doc.IssueDate || 'N/A';\n      \n      // SenderParty\n      const sender = doc.SenderParty?.[0] || doc.SenderParty;\n      if (sender) {\n        const taxScheme = sender.PartyTaxScheme?.[0] || sender.PartyTaxScheme;\n        if (taxScheme) {\n          const compId = taxScheme.CompanyID?.[0] || taxScheme.CompanyID;\n          nit = typeof compId === 'object' ? (compId._ || compId['#text'] || JSON.stringify(compId)) : (compId || 'N/A');\n          razonSocial = taxScheme.RegistrationName?.[0] || taxScheme.RegistrationName || 'N/A';\n        }\n      }\n      \n      // Intentar extraer total de la factura embebida\n      // La factura embebida está como texto en Attachment.ExternalReference.Description\n      // Pero ya parseada por el nodo XML, podría estar como objeto\n      const attachment = doc.Attachment?.[0] || doc.Attachment;\n      if (attachment) {\n        const extRef = attachment.ExternalReference?.[0] || attachment.ExternalReference;\n        if (extRef) {\n          const descContent = extRef.Description?.[0] || extRef.Description;\n          // Si el nodo XML parseó la factura embebida\n          if (typeof descContent === 'object' && descContent.Invoice) {\n            const embInv = descContent.Invoice;\n            const lmt = embInv.LegalMonetaryTotal?.[0] || embInv.LegalMonetaryTotal;\n            if (lmt) {\n              const payable = lmt.PayableAmount?.[0] || lmt.PayableAmount;\n              total = parseFloat(typeof payable === 'object' ? (payable._ || payable['#text'] || 0) : payable) || 0;\n            }\n            // Descripción\n            let line = embInv.InvoiceLine;\n            if (Array.isArray(line)) line = line[0];\n            if (line) {\n              const lineItem = line.Item?.[0] || line.Item;\n              if (lineItem) {\n                descripcion = lineItem.Description?.[0] || lineItem.Description || lineItem.Name?.[0] || lineItem.Name || 'N/A';\n              }\n            }\n          }\n        }\n      }\n    } else if (inv) {\n      // Invoice directo\n      numFactura = inv.ID?.[0] || inv.ID || 'N/A';\n      fecha = inv.IssueDate?.[0] || inv.IssueDate || 'N/A';\n      \n      const supplier = inv.AccountingSupplierParty?.[0]?.Party?.[0] || inv.AccountingSupplierParty?.Party;\n      if (supplier) {\n        const taxScheme = supplier.PartyTaxScheme?.[0] || supplier.PartyTaxScheme;\n        if (taxScheme) {\n          const compId = taxScheme.CompanyID?.[0] || taxScheme.CompanyID;\n          nit = typeof compId === 'object' ? (compId._ || compId['#text'] || 'N/A') : (compId || 'N/A');\n          razonSocial = taxScheme.RegistrationName?.[0] || taxScheme.RegistrationName || 'N/A';\n        }\n      }\n      \n      const lmt = inv.LegalMonetaryTotal?.[0] || inv.LegalMonetaryTotal;\n      if (lmt) {\n        const payable = lmt.PayableAmount?.[0] || lmt.PayableAmount;\n        total = parseFloat(typeof payable === 'object' ? (payable._ || payable['#text'] || 0) : payable) || 0;\n      }\n      \n      let line = inv.InvoiceLine;\n      if (Array.isArray(line)) line = line[0];\n      if (line) {\n        const lineItem = line.Item?.[0] || line.Item;\n        if (lineItem) {\n          descripcion = lineItem.Description?.[0] || lineItem.Description || lineItem.Name?.[0] || lineItem.Name || 'N/A';\n        }\n      }\n    }\n    \n    results.push({\n      json: {\n        nit_emisor: String(nit).trim(),\n        razon_social: String(razonSocial).trim(),\n        numero_factura: String(numFactura).trim(),\n        fecha_emision: String(fecha).trim(),\n        valor_total: total,\n        descripcion: String(descripcion).trim(),\n        procesado_en: new Date().toISOString()\n      }\n    });\n  } catch (error) {\n    results.push({\n      json: {\n        nit_emisor: 'N/A',\n        razon_social: 'N/A',\n        numero_factura: 'N/A',\n        fecha_emision: 'N/A',\n        valor_total: 0,\n        descripcion: 'N/A',\n        error: error.message,\n        procesado_en: new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "extract-fields",
+      "name": "Extraer Datos Factura",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1260,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $env.GOOGLE_SHEET_URL }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "Hoja 1"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "google-sheets",
+      "name": "Registrar en Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1500,
+        500
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets OAuth"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Disparador Manual": {
+      "main": [
+        [
+          {
+            "node": "Leer Correos IMAP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cada 5 Minutos": {
+      "main": [
+        [
+          {
+            "node": "Leer Correos IMAP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Correos IMAP": {
+      "main": [
+        [
+          {
+            "node": "Descomprimir ZIP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descomprimir ZIP": {
+      "main": [
+        [
+          {
+            "node": "XML a Texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "XML a Texto": {
+      "main": [
+        [
+          {
+            "node": "Parsear XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear XML": {
+      "main": [
+        [
+          {
+            "node": "Extraer Datos Factura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Datos Factura": {
+      "main": [
+        [
+          {
+            "node": "Registrar en Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Facturación",
+      "id": "1"
+    }
+  ]
+}
