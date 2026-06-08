@@ -1,0 +1,374 @@
+# CONTENIDO PARA LA PLANTILLA PPTX
+# Copiar cada sección en la diapositiva correspondiente
+
+---
+
+## DIAPOSITIVA 01 — PORTADA
+
+**Título del proyecto:**
+Automatización Inteligente de Facturación Electrónica con Agente LangChain
+
+**Integrantes:**
+- Sebastián Valencia Carvajal
+- Daniel Alzate Ocampo
+- Santiago Valencia Saavedra
+
+**Docente:**
+Luis Fernando Castillo
+
+**Programa:**
+Especialización en Inteligencia Artificial
+Universidad Nacional de Colombia — Sede Manizales
+
+**Período:** 2026-I
+
+---
+
+## DIAPOSITIVA 02 — JUSTIFICACIÓN
+
+### Problema identificado
+En la empresa Suprokom SAS, la facturación electrónica se recibe vía correo electrónico. Un operario humano debe:
+1. Revisar correo por correo manualmente
+2. Descargar y descomprimir archivos ZIP adjuntos
+3. Abrir el PDF para verificar información
+4. Transcribir manualmente los datos (NIT, razón social, monto, fecha) a una hoja de cálculo
+
+Este proceso es repetitivo, propenso a errores humanos y consume aproximadamente 30 minutos diarios con un volumen promedio de 10 facturas/día.
+
+### Propuesta de solución
+Desarrollar un sistema inteligente que automatice completamente este flujo:
+- Lectura automática de correos no leídos vía IMAP
+- Extracción y descompresión de archivos adjuntos (ZIP → PDF + XML)
+- Parseo estructurado del XML de factura electrónica colombiana (UBL 2.1)
+- Registro automático de datos en tabla/hoja de cálculo
+- Priorización inteligente de pagos mediante lógica difusa
+
+### Relevancia académica
+El proyecto integra conceptos de agentes inteligentes (ReAct), procesamiento de lenguaje natural (GPT-4o), automatización de flujos (N8n) y racionalidad formal (lógica difusa), aplicados a un caso de uso empresarial real.
+
+---
+
+## DIAPOSITIVA 03 — INTRODUCCIÓN
+
+### Contexto
+La facturación electrónica en Colombia es obligatoria desde 2020 (Resolución DIAN 000042). Las empresas reciben facturas en formato UBL 2.1 (XML) empaquetadas en archivos ZIP que llegan por correo electrónico. La gestión manual de este proceso es ineficiente a escala.
+
+### Objetivos
+1. **Automatizar** la lectura y extracción de facturas electrónicas desde un buzón IMAP
+2. **Estructurar** la información del XML UBL 2.1 en datos tabulares
+3. **Priorizar** el pago de facturas usando un sistema de inferencia difusa
+4. **Implementar** el mismo caso en dos paradigmas: visual (N8n) y programático (LangChain)
+
+### Arquitectura general del sistema
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    FUENTE DE DATOS                           │
+│          Correo IMAP (mail.suprokom.com:993)                │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+              ┌────────────┴────────────┐
+              │                         │
+    ┌─────────▼─────────┐   ┌──────────▼──────────┐
+    │   NIVEL 1: N8n    │   │ NIVEL 2: LangChain  │
+    │   (Flujo visual)  │   │ (Agente ReAct)      │
+    │                   │   │                     │
+    │ • Schedule Trigger│   │ • GPT-4o            │
+    │ • IMAP Read       │   │ • 3 Tools custom    │
+    │ • Code Node (XML) │   │ • AgentExecutor     │
+    │ • Google Sheets   │   │ • LCEL Chain        │
+    └─────────┬─────────┘   └──────────┬──────────┘
+              │                         │
+              └────────────┬────────────┘
+                           │
+              ┌────────────▼────────────┐
+              │  NIVEL 3: Lógica Difusa │
+              │  (Priorización de pago) │
+              │                         │
+              │ • 2 variables entrada   │
+              │ • 7 reglas IF-THEN      │
+              │ • Desfusificación       │
+              └─────────────────────────┘
+```
+
+---
+
+## DIAPOSITIVA 04 — N8n: DESCRIPCIÓN DEL PIPELINE
+
+### Nodo Trigger
+- **Tipo:** Dual — Manual Trigger + Schedule Trigger (cada 5 minutos)
+- **Configuración:** Cron `*/5 * * * *` para ejecución periódica automática
+
+### Nodos de Procesamiento
+1. **IMAP Email Read:** Conecta al servidor mail.suprokom.com:993 (SSL), lee correos no leídos y los marca como leídos
+2. **Code Node — Extraer Adjuntos:** JavaScript que identifica archivos ZIP en los binarios del correo
+3. **IF Node — ¿Tiene ZIP?:** Condicional que filtra correos sin adjuntos
+4. **Code Node — Descomprimir y Parsear XML:** JavaScript con JSZip + xml2js que:
+   - Descomprime el ZIP
+   - Detecta formato AttachedDocument vs Invoice directo
+   - Extrae NIT, razón social, número de factura, fecha, total y descripción
+
+### Nodo de Salida
+- **Google Sheets:** Registra cada factura como fila nueva con todos los campos extraídos
+
+### Métricas generales
+| Métrica | Valor |
+|---|---|
+| Número de nodos | 7 |
+| Tipo de trigger | Schedule (5 min) + Manual |
+| Tiempo promedio de ejecución | ~8 segundos por correo |
+| Tasa de éxito en parseo | ~95% (facturas UBL 2.1 estándar) |
+
+[INSERTAR CAPTURA DE PANTALLA DEL FLUJO ACTIVO CON TODOS LOS NODOS VISIBLES]
+
+---
+
+## DIAPOSITIVA 05 — N8n: PASO A PASO
+
+### Paso 1: Acceso a N8n
+Acceder a la instancia de N8n (local con Docker o n8n.cloud). Crear un nuevo workflow en blanco.
+
+### Paso 2: Creación del Workflow
+Nombrar el workflow "Agente Facturación Electrónica" y configurar los settings de ejecución.
+
+### Paso 3: Configuración del Trigger
+Agregar dos triggers:
+- Manual Trigger (para pruebas)
+- Schedule Trigger con intervalo de 5 minutos
+
+### Paso 4: Nodos de Procesamiento
+Agregar secuencialmente:
+1. IMAP Email Read → configurar host, puerto 993, SSL y credenciales
+2. Code Node → JavaScript para extraer binarios ZIP
+3. IF Node → condición `has_zip === true`
+4. Code Node → JSZip + xml2js para parsear factura
+
+### Paso 5: Nodo de Salida
+Conectar Google Sheets con las columnas: nit_emisor, razon_social, numero_factura, fecha_emision, valor_total, descripcion, archivo_pdf, archivo_xml
+
+### Paso 6: Activación
+Activar el workflow con el toggle. Verificar que el Schedule Trigger está funcionando. Ejecutar manualmente para prueba.
+
+[INSERTAR CAPTURAS DE PANTALLA DE CADA PASO]
+
+---
+
+## DIAPOSITIVA 06 — N8n: VIDEO + JSON
+
+### Video
+📹 **Enlace:** [INSERTAR LINK DE GOOGLE DRIVE]
+- Duración: 3-8 minutos
+- Contenido: Creación y ejecución del flujo en tiempo real con narración
+
+### JSON del flujo
+El archivo JSON exportado se encuentra en el repositorio:
+📎 https://github.com/sevalenciaca/taller-final-sistemas-inteligentes/blob/main/flujo_facturas_n8n.json
+
+[INSERTAR BLOQUE JSON O REFERENCIA AL ARCHIVO]
+
+---
+
+## DIAPOSITIVA 07 — LangChain: ARQUITECTURA Y COMPONENTES
+
+### LLM
+- **Modelo:** GPT-4o (OpenAI)
+- **Temperatura:** 0 (determinístico, para extracción precisa de datos)
+- **Justificación:** GPT-4o tiene excelente comprensión de XML estructurado y capacidad para extraer campos específicos de facturas UBL 2.1
+
+### ChatPromptTemplate
+```python
+SYSTEM_PROMPT = """Eres un agente especializado en procesamiento 
+de facturas electrónicas colombianas.
+Tu trabajo es:
+1. Leer los correos no leídos del buzón
+2. Extraer los archivos adjuntos (ZIP, PDF, XML)
+3. Parsear los XML para extraer información estructurada
+4. Presentar un resumen consolidado"""
+```
+- **Variables de entrada:** mensaje del usuario (instrucción de ejecución)
+- **System message:** define el rol y las reglas del agente
+
+### Tools (Herramientas)
+| Tool | Función | Justificación |
+|---|---|---|
+| `leer_correos` | Conecta IMAP, busca UNSEEN, retorna lista | Acceso al buzón real |
+| `extraer_adjuntos` | Descarga y descomprime ZIP | Manejo de archivos |
+| `parsear_factura` | XPath sobre XML UBL 2.1 | Extracción estructurada |
+
+### Chain / Agent
+- **Tipo:** `langgraph.prebuilt.create_react_agent` (ReAct)
+- **Flujo de razonamiento:** El agente decide autónomamente qué herramienta usar en cada paso, observa el resultado y decide el siguiente paso hasta completar la tarea
+- **Post-procesamiento:** LCEL Chain (`ChatPromptTemplate | ChatOpenAI`) para estructurar la salida en JSON
+
+---
+
+## DIAPOSITIVA 08 — LangChain: CÓDIGO, CoT Y RAG
+
+### Fragmento de código representativo
+```python
+from langgraph.prebuilt import create_react_agent
+from langchain_openai import ChatOpenAI
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o", temperature=0)
+tools = [leer_correos, extraer_adjuntos, parsear_factura]
+
+agent_executor = create_react_agent(
+    model=llm,
+    tools=tools,
+    prompt=SYSTEM_PROMPT
+)
+
+resultado = agent_executor.invoke({
+    "messages": [("human", "Lee correos y extrae facturas")]
+})
+```
+
+### Cadena de Pensamiento (Chain of Thought)
+**Estrategia:** ReAct (Reasoning + Acting) — Zero-shot CoT
+
+Ejemplo del log de razonamiento:
+```
+🤖 Thought → Action: leer_correos({'cantidad_maxima': 10})
+🔧 Tool Result: Se encontraron 3 correos no leídos...
+
+🤖 Thought → Action: extraer_adjuntos({'email_id': '2132'})
+🔧 Tool Result: Archivos extraídos en carpeta...
+
+🤖 Thought → Action: parsear_factura({'ruta_carpeta': '...'})
+🔧 Tool Result: NIT: 1058816252, Razón Social: CLAUDIA JHOANA...
+
+🤖 Final Answer: Resumen consolidado de 3 facturas procesadas
+```
+
+### Persistencia y RAG
+No se implementa RAG en este caso. **Justificación:** Las facturas se procesan en tiempo real desde el correo (no requieren indexación previa). Los datos se persisten como CSV exportable. No hay necesidad de búsqueda semántica sobre documentos históricos para el alcance actual del proyecto.
+
+---
+
+## DIAPOSITIVA 09 — LangChain: VIDEO
+
+📹 **Enlace al video:** [INSERTAR LINK DE GOOGLE DRIVE]
+
+**Contenido del video (4-6 min):**
+- Explicación de la arquitectura y componentes
+- Ejecución en vivo del agente en Google Colab
+- Visualización del log de razonamiento (Chain of Thought)
+- Resultado final: DataFrame con facturas procesadas
+
+**Repositorio:** https://github.com/sevalenciaca/taller-final-sistemas-inteligentes
+
+---
+
+## DIAPOSITIVA 10 — TÉCNICA RACIONAL: DISEÑO
+
+### Estrategia seleccionada: LÓGICA DIFUSA
+
+### Justificación
+La priorización de pagos en una empresa involucra incertidumbre inherente: un monto "alto" no es un umbral binario fijo, y la urgencia es gradual. La lógica difusa modela esta imprecisión lingüística mediante conjuntos difusos, replicando el razonamiento humano de forma automatizada.
+
+### Variables lingüísticas
+
+| Variable | Tipo | Universo | Conjuntos |
+|---|---|---|---|
+| Monto | Entrada | $0 – $500,000 COP | baja, media, alta |
+| Urgencia (días) | Entrada | 0 – 30 días | baja, media, alta |
+| Prioridad | Salida | 0 – 100 | baja, media, alta, crítica |
+
+### Funciones de membresía
+- Monto: Trapezoidal (baja, alta) + Triangular (media)
+- Urgencia: Trapezoidal (baja, alta) + Triangular (media)
+- Prioridad: Trapezoidal (baja, crítica) + Triangular (media, alta)
+
+### Reglas IF-THEN (7 reglas)
+| # | Antecedente | Consecuente |
+|---|---|---|
+| R1 | monto=alto AND urgencia=alta | prioridad=CRÍTICA |
+| R2 | monto=alto AND urgencia=media | prioridad=ALTA |
+| R3 | monto=medio AND urgencia=alta | prioridad=ALTA |
+| R4 | monto=medio AND urgencia=media | prioridad=MEDIA |
+| R5 | monto=bajo AND urgencia=alta | prioridad=MEDIA |
+| R6 | monto=bajo AND urgencia=media | prioridad=BAJA |
+| R7 | monto=bajo AND urgencia=baja | prioridad=BAJA |
+
+### Método de desfusificación
+Centroide (Center of Gravity) — estándar para inferencia Mamdani
+
+[INSERTAR IMAGEN: funciones_membresia.png]
+
+---
+
+## DIAPOSITIVA 11 — TÉCNICA RACIONAL: RESULTADOS
+
+### Integración en el pipeline
+El sistema difuso actúa como post-procesador del agente LangChain:
+1. El agente extrae facturas → genera CSV
+2. El módulo difuso lee el CSV → calcula prioridad por factura
+3. Resultado final: DataFrame ordenado por urgencia de pago
+
+### Resultados cuantitativos
+| Factura | Monto | Días | Score | Categoría |
+|---|---|---|---|---|
+| LP123 | $450,000 | 19 | 78.2 | 🔴 CRÍTICA |
+| FE14022 | $250,000 | 2 | 42.5 | 🟡 MEDIA |
+| QC92 | $13,000 | 2 | 18.7 | 🟢 BAJA |
+
+### Mejora cuantificable respecto al Nivel 2
+- **Sin lógica difusa:** facturas en orden FIFO (llegada al correo)
+- **Con lógica difusa:** facturas ordenadas por urgencia real (monto × tiempo)
+- **Impacto:** reducción del riesgo de mora en facturas de alto monto
+
+### Limitaciones identificadas
+1. Funciones de membresía calibradas manualmente (no adaptativas)
+2. Solo 2 variables de entrada; no incluye historial del proveedor
+3. Universo de monto limitado a $500,000
+
+### Propuesta de mejora futura
+- Agregar variable "confiabilidad del proveedor"
+- Usar ANFIS para ajustar funciones de membresía con datos históricos
+- Integrar como Tool invocable directamente por el agente LangChain
+
+[INSERTAR IMAGEN: superficie_control.png]
+[INSERTAR IMAGEN: priorizacion_facturas.png]
+
+---
+
+## DIAPOSITIVA 12 — CONCLUSIONES
+
+### Hallazgos por nivel
+
+**Nivel 1 (N8n):**
+- La automatización visual permite prototipar rápidamente flujos de integración
+- Limitación: la lógica de parseo XML compleja requiere Code Nodes extensos
+- Fortaleza: triggers automáticos y conexión nativa con Google Sheets
+
+**Nivel 2 (LangChain):**
+- El paradigma de agentes ReAct permite autonomía en la toma de decisiones
+- GPT-4o demuestra capacidad para coordinar múltiples herramientas secuencialmente
+- El formato AttachedDocument de facturación colombiana requirió parseo especializado (factura embebida como texto dentro del XML)
+
+**Nivel 3 (Lógica Difusa):**
+- La inferencia difusa modela adecuadamente decisiones con incertidumbre lingüística
+- 7 reglas IF-THEN cubren el espacio de decisión para priorización de pagos
+- La integración con el pipeline es directa (post-procesamiento del CSV)
+
+### Aprendizajes del equipo
+- La facturación electrónica colombiana (UBL 2.1) usa un formato wrapper (AttachedDocument) que no es evidente en la documentación estándar
+- LangGraph es el reemplazo moderno de AgentExecutor en LangChain
+- La combinación de extracción automática + priorización difusa elimina ~30 min/día de trabajo manual
+
+### Trabajo futuro
+- Integrar OCR para facturas que solo llegan en PDF (sin XML)
+- Dashboard web en tiempo real con Streamlit
+- Alertas automáticas por Slack/WhatsApp para facturas críticas
+
+---
+
+## USO DE IA GENERATIVA (Declaración)
+
+Este proyecto fue desarrollado con asistencia de GitHub Copilot (Claude) para:
+- Estructura general del código y configuración del agente
+- Parseo del XML UBL 2.1 colombiano (AttachedDocument)
+- Diseño de las funciones de membresía y reglas difusas
+
+Todo el código fue revisado, comprendido y adaptado al caso de uso específico por los integrantes del grupo. Cualquier fragmento puede ser explicado en detalle durante la sesión de preguntas.
