@@ -1,0 +1,1199 @@
+{
+  "name": "Agente Facturas Electronicas",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "550e8400-e29b-41d4-a716-446655440001",
+      "name": "Inicio Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "read",
+        "downloadAttachments": true,
+        "format": "resolved",
+        "options": {
+          "customEmailConfig": "[\"UNSEEN\"]",
+          "allowUnauthorizedCerts": false
+        }
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440002",
+      "name": "Leer Correos No Leidos",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ],
+      "credentials": {
+        "imap": {
+          "id": "REEMPLAZAR_ID",
+          "name": "IMAP Facturacion Suprokom"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = [];\nfor (const item of $input.all()) {\n  const binary = item.binary || {};\n  const emailData = item.json;\n  let fromText = '';\n  if (emailData.from) {\n    if (typeof emailData.from === 'string') fromText = emailData.from;\n    else if (emailData.from.text) fromText = emailData.from.text;\n    else if (emailData.from.value && emailData.from.value[0]) fromText = emailData.from.value[0].address || '';\n  }\n  const emailMeta = {\n    emailSubject: emailData.subject || '',\n    emailFrom: fromText,\n    emailDate: emailData.date || '',\n    emailMessageId: emailData.messageId || String(emailData.uid || Date.now())\n  };\n  for (const [key, binaryData] of Object.entries(binary)) {\n    const filename = binaryData.fileName || binaryData.fileNameFull || key;\n    const extension = filename.includes('.') ? filename.split('.').pop().toLowerCase() : '';\n    results.push({\n      json: { ...emailMeta, filename, extension, mimeType: binaryData.mimeType || '', fromZip: false },\n      binary: { data: binaryData }\n    });\n  }\n}\nreturn results;"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440003",
+      "name": "Separar Adjuntos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-zip-check",
+              "leftValue": "={{ $json.extension }}",
+              "rightValue": "zip",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440004",
+      "name": "Es Archivo ZIP?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "decompress",
+        "binaryPropertyName": "data"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440005",
+      "name": "Extraer Archivos ZIP",
+      "type": "n8n-nodes-base.compression",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = [];\nfor (const item of $input.all()) {\n  const binary = item.binary || {};\n  const meta = item.json;\n  for (const [key, binaryData] of Object.entries(binary)) {\n    const filename = binaryData.fileName || binaryData.fileNameFull || key;\n    if (filename.toLowerCase().endsWith('.zip')) continue;\n    const extension = filename.includes('.') ? filename.split('.').pop().toLowerCase() : '';\n    results.push({\n      json: { emailSubject: meta.emailSubject || '', emailFrom: meta.emailFrom || '', emailDate: meta.emailDate || '', emailMessageId: meta.emailMessageId || '', filename, extension, mimeType: binaryData.mimeType || '', fromZip: true },\n      binary: { data: binaryData }\n    });\n  }\n}\nreturn results;"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440006",
+      "name": "Separar Archivos ZIP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440007",
+      "name": "Combinar Archivos",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-pdf",
+              "leftValue": "={{ $json.extension }}",
+              "rightValue": "pdf",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cond-xml",
+              "leftValue": "={{ $json.extension }}",
+              "rightValue": "xml",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440008",
+      "name": "Filtrar PDF y XML",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\n\nfunction stripCdata(text) {\n  if (!text) return '';\n  const s = text.trim();\n  if (s.startsWith('<![CDATA[') && s.endsWith(']]>')) return s.slice(9, -3);\n  return s;\n}\n\nfunction decodeEntities(text) {\n  return text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '\\u0022').replace(/&#39;/g, '\\u0027');\n}\n\nfunction getTagValue(xml, tag) {\n  const re = new RegExp('<(?:[\\\\w.-]+:)?' + tag + '(?:\\\\s[^>]*)?>([\\\\s\\\\S]*?)<\\/(?:[\\\\w.-]+:)?' + tag + '>', 'i');\n  const m = xml.match(re);\n  if (m && m[1]) { const val = m[1].replace(/<[^>]+>/g, '').trim(); return val || 'N/A'; }\n  return 'N/A';\n}\n\nfunction getFirstMatch(xml, tags) {\n  for (const tag of tags) { const val = getTagValue(xml, tag); if (val !== 'N/A') return val; }\n  return 'N/A';\n}\n\nfunction getBlockContent(xml, tag) {\n  const re = new RegExp('<(?:[\\\\w.-]+:)?' + tag + '(?:\\\\s[^>]*)?>([\\\\s\\\\S]*?)<\\/(?:[\\\\w.-]+:)?' + tag + '>', 'i');\n  const m = xml.match(re);\n  return m ? m[1] : '';\n}\n\nfunction parseFactura(xmlContent) {\n  const esAttachedDocument = /<(?:[\\w.-]+:)?AttachedDocument[\\s>]/i.test(xmlContent);\n  let nitEmisor = 'N/A', razonSocial = 'N/A', numeroFactura = 'N/A', fechaEmision = 'N/A', valorTotal = '0', descripcion = 'N/A';\n  let xmlPrincipal = xmlContent;\n  const tipoDoc = esAttachedDocument ? 'AttachedDocument' : 'Invoice';\n  if (esAttachedDocument) {\n    numeroFactura = getTagValue(xmlContent, 'ID');\n    fechaEmision  = getTagValue(xmlContent, 'IssueDate');\n    const senderBlock = getBlockContent(xmlContent, 'SenderParty');\n    if (senderBlock) { nitEmisor = getFirstMatch(senderBlock, ['CompanyID', 'ID']); razonSocial = getFirstMatch(senderBlock, ['RegistrationName', 'Name']); }\n    const descBlock = getBlockContent(xmlContent, 'Description');\n    if (descBlock) { let embebido = stripCdata(descBlock); embebido = decodeEntities(embebido).trim(); if (embebido.startsWith('<')) xmlPrincipal = embebido; }\n  }\n  if (nitEmisor === 'N/A') { const sb = getBlockContent(xmlPrincipal, 'AccountingSupplierParty'); if (sb) { nitEmisor = getFirstMatch(sb, ['CompanyID', 'ID']); razonSocial = getFirstMatch(sb, ['RegistrationName', 'Name']); } }\n  if (numeroFactura === 'N/A') numeroFactura = getTagValue(xmlPrincipal, 'ID');\n  if (fechaEmision === 'N/A')  fechaEmision  = getTagValue(xmlPrincipal, 'IssueDate');\n  const mb = getBlockContent(xmlPrincipal, 'LegalMonetaryTotal');\n  if (mb) valorTotal = getFirstMatch(mb, ['PayableAmount', 'TaxInclusiveAmount', 'LineExtensionAmount']);\n  if (valorTotal === 'N/A' || valorTotal === '0') valorTotal = getFirstMatch(xmlPrincipal, ['PayableAmount', 'TaxInclusiveAmount']);\n  const fl = getBlockContent(xmlPrincipal, 'InvoiceLine');\n  if (fl) { const ib = getBlockContent(fl, 'Item'); descripcion = getFirstMatch(ib || fl, ['Description', 'Name']); }\n  return { nitEmisor, razonSocial, numeroFactura, fechaEmision, valorTotal, descripcion, tipoDocumento: tipoDoc };\n}\n\nconst grupos = {};\nfor (const item of allItems) {\n  const id = item.json.emailMessageId || ('sin_id_' + Date.now());\n  if (!grupos[id]) grupos[id] = { xmlItems: [], pdfItems: [], meta: { emailSubject: item.json.emailSubject || '', emailFrom: item.json.emailFrom || '', emailDate: item.json.emailDate || '', emailMessageId: item.json.emailMessageId || id } };\n  if (item.json.extension === 'xml') grupos[id].xmlItems.push(item);\n  else if (item.json.extension === 'pdf') grupos[id].pdfItems.push(item);\n}\n\nconst resultados = [];\nfor (const [msgId, grupo] of Object.entries(grupos)) {\n  for (const xmlItem of grupo.xmlItems) {\n    const binaryData = xmlItem.binary && xmlItem.binary.data;\n    if (!binaryData || !binaryData.data) continue;\n    const xmlContent = Buffer.from(binaryData.data, 'base64').toString('utf-8');\n    const facturaData = parseFactura(xmlContent);\n    const pdfItem = grupo.pdfItems.length > 0 ? grupo.pdfItems[0] : null;\n    const outputItem = { json: { ...grupo.meta, ...facturaData, xmlFilename: xmlItem.json.filename, pdfFilename: pdfItem ? pdfItem.json.filename : 'Sin PDF' }, binary: { xml: binaryData } };\n    if (pdfItem && pdfItem.binary && pdfItem.binary.data) outputItem.binary.pdf = pdfItem.binary.data;\n    resultados.push(outputItem);\n  }\n  if (grupo.xmlItems.length === 0 && grupo.pdfItems.length > 0) {\n    for (const pdfItem of grupo.pdfItems) {\n      resultados.push({ json: { ...grupo.meta, nitEmisor: 'N/A', razonSocial: 'N/A', numeroFactura: 'SIN_XML', fechaEmision: 'N/A', valorTotal: '0', descripcion: 'Correo sin XML adjunto', tipoDocumento: 'Solo PDF', xmlFilename: 'Sin XML', pdfFilename: pdfItem.json.filename }, binary: { pdf: pdfItem.binary.data } });\n    }\n  }\n}\n\nif (resultados.length === 0) return [{ json: { mensaje: 'No se encontraron facturas para procesar', timestamp: new Date().toISOString() } }];\nreturn resultados;"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440009",
+      "name": "Parsear XML UBL 2.1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construir el payload para la API de OpenAI\nconst results = [];\n\nfor (const item of $input.all()) {\n  const j = item.json;\n\n  const systemPrompt = 'Eres un asistente especializado en facturacion electronica colombiana (DIAN). Recibes datos extraidos de un XML UBL 2.1 y debes validarlos, limpiarlos y devolverlos en JSON estructurado.\\n\\nReglas estrictas:\\n1. Devuelve UNICAMENTE un objeto JSON valido, sin texto adicional, sin markdown, sin ```json.\\n2. Si un campo es N/A o esta vacio, intenta inferirlo del contexto. Si no es posible, dejalo como cadena vacia.\\n3. El campo valor_total debe ser un numero (float). Si viene con puntos de miles como 1.500.000 conviertelo a 1500000. Si tiene coma decimal como 1500000,50 conviertelo a 1500000.50.\\n4. La fecha debe quedar en formato YYYY-MM-DD.\\n5. El numero de factura debe incluir el prefijo (ej: FE-1234, FV0001).\\n6. La razon social debe estar en mayusculas.\\n\\nEstructura de salida exacta:\\n{\\n  \"nit_emisor\": \"string\",\\n  \"razon_social\": \"string\",\\n  \"numero_factura\": \"string\",\\n  \"fecha_emision\": \"string\",\\n  \"valor_total\": number,\\n  \"descripcion\": \"string\",\\n  \"tipo_documento\": \"string\",\\n  \"correo_remitente\": \"string\",\\n  \"fecha_correo\": \"string\",\\n  \"nombre_xml\": \"string\",\\n  \"nombre_pdf\": \"string\"\\n}';\n\n  const userPrompt = '=== DATOS EXTRAIDOS DEL XML ===\\nNIT Emisor: ' + (j.nitEmisor || '') + '\\nRazon Social: ' + (j.razonSocial || '') + '\\nNumero Factura: ' + (j.numeroFactura || '') + '\\nFecha Emision: ' + (j.fechaEmision || '') + '\\nValor Total: ' + (j.valorTotal || '') + '\\nDescripcion: ' + (j.descripcion || '') + '\\nTipo Documento: ' + (j.tipoDocumento || '') + '\\n\\n=== DATOS DEL CORREO ===\\nRemitente: ' + (j.emailFrom || '') + '\\nAsunto: ' + (j.emailSubject || '') + '\\nFecha Correo: ' + (j.emailDate || '') + '\\nArchivo XML: ' + (j.xmlFilename || '') + '\\nArchivo PDF: ' + (j.pdfFilename || '') + '\\n\\nValida, limpia y estructura estos datos segun las reglas indicadas.';\n\n  results.push({\n    json: {\n      ...j,\n      _openAIPayload: {\n        model: 'gpt-4o',\n        temperature: 0,\n        messages: [\n          { role: 'system', content: systemPrompt },\n          { role: 'user',   content: userPrompt }\n        ]\n      }\n    },\n    binary: item.binary || {}\n  });\n}\n\nreturn results;"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440010",
+      "name": "Preparar Prompt OpenAI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json._openAIPayload) }}",
+        "options": {}
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440011",
+      "name": "Llamar API OpenAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REEMPLAZAR_OPENAI_ID",
+          "name": "OpenAI Facturas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parsear la respuesta de OpenAI y limpiar el JSON devuelto\nconst results = [];\n\nfor (const item of $input.all()) {\n  // La respuesta HTTP de OpenAI viene en choices[0].message.content\n  let rawContent = '';\n  try {\n    rawContent = item.json.choices[0].message.content || '';\n  } catch(e) {\n    rawContent = '';\n  }\n\n  // Limpiar posible markdown code block que el LLM pueda agregar\n  rawContent = rawContent.trim();\n  if (rawContent.startsWith('```')) {\n    const firstNewline = rawContent.indexOf('\\n');\n    rawContent = rawContent.substring(firstNewline + 1);\n    if (rawContent.endsWith('```')) rawContent = rawContent.slice(0, -3).trim();\n  }\n\n  let facturaLimpia = {};\n  try {\n    facturaLimpia = JSON.parse(rawContent);\n  } catch (e) {\n    facturaLimpia = {\n      error_parseo: 'No se pudo parsear la respuesta de OpenAI',\n      respuesta_raw: rawContent\n    };\n  }\n\n  // Asegurar que valor_total sea numero\n  if (facturaLimpia.valor_total !== undefined && typeof facturaLimpia.valor_total === 'string') {\n    const numStr = facturaLimpia.valor_total.replace(/\\./g, '').replace(',', '.');\n    const num = parseFloat(numStr);\n    facturaLimpia.valor_total = isNaN(num) ? 0 : num;\n  }\n\n  // Generar nombre de carpeta seguro para Google Drive\n  const numFactura = (facturaLimpia.numero_factura || 'SIN_NUMERO').replace(/[^a-zA-Z0-9_-]/g, '_');\n  const fechaHoy   = new Date().toISOString().slice(0, 10);\n  facturaLimpia.carpeta_nombre = 'Factura_' + numFactura + '_' + fechaHoy;\n\n  results.push({\n    json: facturaLimpia,\n    binary: $('Parsear XML UBL 2.1').item.binary || {}\n  });\n}\n\nreturn results;"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440012",
+      "name": "Procesar Respuesta OpenAI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "name='Facturas Suprokom' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name)"
+            },
+            {
+              "name": "pageSize",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440013",
+      "name": "Buscar Carpeta Raiz",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3120,
+        300
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REEMPLAZAR_GDRIVE_ID",
+          "name": "Google Drive Facturas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const driveResponse = $input.first().json;\nconst files = driveResponse.files || [];\nconst invoiceData = $('Procesar Respuesta OpenAI').item.json;\nconst carpeta_raiz_id = files.length > 0 ? files[0].id : null;\nreturn [{\n  json: {\n    ...invoiceData,\n    carpeta_raiz_id: carpeta_raiz_id,\n    _raiz_existe: carpeta_raiz_id !== null\n  },\n  binary: $('Procesar Respuesta OpenAI').item.binary || {}\n}];"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440014",
+      "name": "Extraer ID Carpeta Raiz",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "check-raiz-existe",
+              "leftValue": "={{ $json._raiz_existe }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440015",
+      "name": "Existe Carpeta Raiz?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "Facturas Suprokom",
+        "folderId": {
+          "__rl": true,
+          "value": "root",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440016",
+      "name": "Crear Carpeta Raiz",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3840,
+        140
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REEMPLAZAR_GDRIVE_ID",
+          "name": "Google Drive Facturas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const newFolder = $input.first().json;\nconst invoiceData = $('Procesar Respuesta OpenAI').item.json;\nreturn [{\n  json: {\n    ...invoiceData,\n    carpeta_raiz_id: newFolder.id,\n    _raiz_existe: false\n  },\n  binary: $('Procesar Respuesta OpenAI').item.binary || {}\n}];"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440017",
+      "name": "Fijar ID Carpeta Raiz Nueva",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4080,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ \"name='Archivos Facturas' and mimeType='application/vnd.google-apps.folder' and '\" + $json.carpeta_raiz_id + \"' in parents and trashed=false\" }}"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name)"
+            },
+            {
+              "name": "pageSize",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440019",
+      "name": "Buscar Carpeta Archivos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4560,
+        300
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REEMPLAZAR_GDRIVE_ID",
+          "name": "Google Drive Facturas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const driveResponse = $input.first().json;\nconst files = driveResponse.files || [];\nlet prevData;\ntry {\n  const d = $('Fijar ID Carpeta Raiz Nueva').item.json;\n  prevData = (d && d.carpeta_raiz_id) ? d : $('Extraer ID Carpeta Raiz').item.json;\n} catch(e) {\n  prevData = $('Extraer ID Carpeta Raiz').item.json;\n}\nconst carpeta_archivos_id = files.length > 0 ? files[0].id : null;\nreturn [{\n  json: {\n    ...prevData,\n    carpeta_archivos_id: carpeta_archivos_id,\n    _archivos_existe: carpeta_archivos_id !== null\n  },\n  binary: $('Procesar Respuesta OpenAI').item.binary || {}\n}];"
+      },
+      "id": "550e8400-e29b-41d4-a716-44665544001a",
+      "name": "Extraer ID Carpeta Archivos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "check-archivos-existe",
+              "leftValue": "={{ $json._archivos_existe }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "550e8400-e29b-41d4-a716-44665544001b",
+      "name": "Existe Carpeta Archivos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5040,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "Archivos Facturas",
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $json.carpeta_raiz_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "550e8400-e29b-41d4-a716-44665544001c",
+      "name": "Crear Carpeta Archivos Facturas",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        5280,
+        140
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REEMPLAZAR_GDRIVE_ID",
+          "name": "Google Drive Facturas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const newFolder = $input.first().json;\nconst prevData = $('Extraer ID Carpeta Archivos').item.json;\nreturn [{\n  json: {\n    ...prevData,\n    carpeta_archivos_id: newFolder.id,\n    _archivos_existe: false\n  },\n  binary: $('Procesar Respuesta OpenAI').item.binary || {}\n}];"
+      },
+      "id": "550e8400-e29b-41d4-a716-44665544001d",
+      "name": "Fijar ID Carpeta Archivos Nueva",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5520,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $json.carpeta_nombre }}",
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $json.carpeta_archivos_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "550e8400-e29b-41d4-a716-44665544001f",
+      "name": "Crear Carpeta Factura Numero",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        6000,
+        300
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REEMPLAZAR_GDRIVE_ID",
+          "name": "Google Drive Facturas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const newFolder = $input.first().json;\nconst prevData = $('Extraer ID Carpeta Archivos').item.json;\nreturn [{\n  json: {\n    ...prevData,\n    carpeta_factura_id: newFolder.id,\n    carpeta_factura_nombre: newFolder.name\n  },\n  binary: $('Procesar Respuesta OpenAI').item.binary || {}\n}];"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440020",
+      "name": "Fijar ID Carpeta Factura",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = [];\nfor (const item of $input.all()) {\n  const binary = item.binary || {};\n  const pdfBinary = binary.pdf || null;\n  const pdfFilename = (pdfBinary && (pdfBinary.fileName || pdfBinary.fileNameFull))\n    || item.json.pdfFilename || item.json.nombre_pdf || 'factura.pdf';\n  results.push({\n    json: { ...item.json, _tipo_archivo: 'pdf', _filename: pdfFilename, _pdf_available: pdfBinary !== null },\n    binary: pdfBinary ? { data: pdfBinary } : {}\n  });\n}\nreturn results;"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440021",
+      "name": "Preparar PDF para Subir",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6480,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = [];\nfor (const item of $input.all()) {\n  const binary = item.binary || {};\n  const xmlBinary = binary.xml || null;\n  const xmlFilename = (xmlBinary && (xmlBinary.fileName || xmlBinary.fileNameFull))\n    || item.json.xmlFilename || item.json.nombre_xml || 'factura.xml';\n  results.push({\n    json: { ...item.json, _tipo_archivo: 'xml', _filename: xmlFilename, _xml_available: xmlBinary !== null },\n    binary: xmlBinary ? { data: xmlBinary } : {}\n  });\n}\nreturn results;"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440022",
+      "name": "Preparar XML para Subir",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6480,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "name": "={{ $json._filename }}",
+        "inputDataFieldName": "data",
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $json.carpeta_factura_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440023",
+      "name": "Subir PDF a Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        6720,
+        140
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REEMPLAZAR_GDRIVE_ID",
+          "name": "Google Drive Facturas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "name": "={{ $json._filename }}",
+        "inputDataFieldName": "data",
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $json.carpeta_factura_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440024",
+      "name": "Subir XML a Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        6720,
+        460
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REEMPLAZAR_GDRIVE_ID",
+          "name": "Google Drive Facturas"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const driveOut = $input.first().json;\nconst invoice = $('Preparar PDF para Subir').item.json;\nconst fileId = driveOut.id || '';\nconst webLink = driveOut.webViewLink || (fileId ? 'https://drive.google.com/file/d/' + fileId + '/view' : '');\nreturn [{\n  json: {\n    ...invoice,\n    link_pdf: webLink,\n    drive_id_pdf: fileId\n  }\n}];"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440025",
+      "name": "Extraer Link PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6960,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const driveOut = $input.first().json;\nconst invoice = $('Preparar XML para Subir').item.json;\nconst fileId = driveOut.id || '';\nconst webLink = driveOut.webViewLink || (fileId ? 'https://drive.google.com/file/d/' + fileId + '/view' : '');\nreturn [{\n  json: {\n    ...invoice,\n    link_xml: webLink,\n    drive_id_xml: fileId\n  }\n}];"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440026",
+      "name": "Extraer Link XML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6960,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440027",
+      "name": "Merge Links PDF y XML",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        7200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nlet pdfItem = null, xmlItem = null;\nfor (const item of items) {\n  if (item.json._tipo_archivo === 'pdf') pdfItem = item.json;\n  else if (item.json._tipo_archivo === 'xml') xmlItem = item.json;\n}\nconst base = pdfItem || xmlItem || {};\nreturn [{\n  json: {\n    nit_emisor:          base.nit_emisor || '',\n    razon_social:        base.razon_social || '',\n    numero_factura:      base.numero_factura || '',\n    fecha_emision:       base.fecha_emision || '',\n    valor_total:         base.valor_total || 0,\n    descripcion:         base.descripcion || '',\n    tipo_documento:      base.tipo_documento || '',\n    correo_remitente:    base.correo_remitente || '',\n    fecha_correo:        base.fecha_correo || '',\n    nombre_pdf:          base.nombre_pdf || '',\n    nombre_xml:          base.nombre_xml || '',\n    link_pdf:            (pdfItem && pdfItem.link_pdf) || '',\n    link_xml:            (xmlItem && xmlItem.link_xml) || '',\n    carpeta_drive:       base.carpeta_factura_nombre || '',\n    fecha_procesamiento: new Date().toISOString().slice(0, 10)\n  }\n}];"
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440028",
+      "name": "Consolidar Para Sheets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1g5-fr0yTMe0RM5hLMskzs_mrcZSAajKkwXQCE3lyphM",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Facturas",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1g5-fr0yTMe0RM5hLMskzs_mrcZSAajKkwXQCE3lyphM/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "nit_emisor": "={{ $json.nit_emisor }}",
+            "razon_social": "={{ $json.razon_social }}",
+            "numero_factura": "={{ $json.numero_factura }}",
+            "fecha_emision": "={{ $json.fecha_emision }}",
+            "valor_total": "={{ $json.valor_total }}",
+            "descripcion": "={{ $json.descripcion }}",
+            "tipo_documento": "={{ $json.tipo_documento }}",
+            "correo_remitente": "={{ $json.correo_remitente }}",
+            "fecha_correo": "={{ $json.fecha_correo }}",
+            "nombre_pdf": "={{ $json.nombre_pdf }}",
+            "nombre_xml": "={{ $json.nombre_xml }}",
+            "link_pdf": "={{ $json.link_pdf }}",
+            "link_xml": "={{ $json.link_xml }}",
+            "carpeta_drive": "={{ $json.carpeta_drive }}",
+            "fecha_procesamiento": "={{ $json.fecha_procesamiento }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "nit_emisor",
+              "displayName": "nit_emisor",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "razon_social",
+              "displayName": "razon_social",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "numero_factura",
+              "displayName": "numero_factura",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fecha_emision",
+              "displayName": "fecha_emision",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "valor_total",
+              "displayName": "valor_total",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "descripcion",
+              "displayName": "descripcion",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tipo_documento",
+              "displayName": "tipo_documento",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "correo_remitente",
+              "displayName": "correo_remitente",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fecha_correo",
+              "displayName": "fecha_correo",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nombre_pdf",
+              "displayName": "nombre_pdf",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nombre_xml",
+              "displayName": "nombre_xml",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "link_pdf",
+              "displayName": "link_pdf",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "link_xml",
+              "displayName": "link_xml",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "carpeta_drive",
+              "displayName": "carpeta_drive",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fecha_procesamiento",
+              "displayName": "fecha_procesamiento",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {
+          "valueInputMode": "USER_ENTERED"
+        }
+      },
+      "id": "550e8400-e29b-41d4-a716-446655440029",
+      "name": "Agregar Fila Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        7680,
+        300
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REEMPLAZAR_SHEETS_ID",
+          "name": "Google Sheets Facturas"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Inicio Manual": {
+      "main": [
+        [
+          {
+            "node": "Leer Correos No Leidos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Correos No Leidos": {
+      "main": [
+        [
+          {
+            "node": "Separar Adjuntos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar Adjuntos": {
+      "main": [
+        [
+          {
+            "node": "Es Archivo ZIP?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Es Archivo ZIP?": {
+      "main": [
+        [
+          {
+            "node": "Extraer Archivos ZIP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Combinar Archivos",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Extraer Archivos ZIP": {
+      "main": [
+        [
+          {
+            "node": "Separar Archivos ZIP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar Archivos ZIP": {
+      "main": [
+        [
+          {
+            "node": "Combinar Archivos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combinar Archivos": {
+      "main": [
+        [
+          {
+            "node": "Filtrar PDF y XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar PDF y XML": {
+      "main": [
+        [
+          {
+            "node": "Parsear XML UBL 2.1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear XML UBL 2.1": {
+      "main": [
+        [
+          {
+            "node": "Preparar Prompt OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Prompt OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Llamar API OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Llamar API OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Procesar Respuesta OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesar Respuesta OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Buscar Carpeta Raiz",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Carpeta Raiz": {
+      "main": [
+        [
+          {
+            "node": "Extraer ID Carpeta Raiz",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer ID Carpeta Raiz": {
+      "main": [
+        [
+          {
+            "node": "Existe Carpeta Raiz?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Existe Carpeta Raiz?": {
+      "main": [
+        [
+          {
+            "node": "Buscar Carpeta Archivos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Crear Carpeta Raiz",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear Carpeta Raiz": {
+      "main": [
+        [
+          {
+            "node": "Fijar ID Carpeta Raiz Nueva",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fijar ID Carpeta Raiz Nueva": {
+      "main": [
+        [
+          {
+            "node": "Buscar Carpeta Archivos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Carpeta Archivos": {
+      "main": [
+        [
+          {
+            "node": "Extraer ID Carpeta Archivos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer ID Carpeta Archivos": {
+      "main": [
+        [
+          {
+            "node": "Existe Carpeta Archivos?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Existe Carpeta Archivos?": {
+      "main": [
+        [
+          {
+            "node": "Crear Carpeta Factura Numero",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Crear Carpeta Archivos Facturas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear Carpeta Archivos Facturas": {
+      "main": [
+        [
+          {
+            "node": "Fijar ID Carpeta Archivos Nueva",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fijar ID Carpeta Archivos Nueva": {
+      "main": [
+        [
+          {
+            "node": "Crear Carpeta Factura Numero",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear Carpeta Factura Numero": {
+      "main": [
+        [
+          {
+            "node": "Fijar ID Carpeta Factura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fijar ID Carpeta Factura": {
+      "main": [
+        [
+          {
+            "node": "Preparar PDF para Subir",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Preparar XML para Subir",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar PDF para Subir": {
+      "main": [
+        [
+          {
+            "node": "Subir PDF a Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar XML para Subir": {
+      "main": [
+        [
+          {
+            "node": "Subir XML a Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subir PDF a Drive": {
+      "main": [
+        [
+          {
+            "node": "Extraer Link PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subir XML a Drive": {
+      "main": [
+        [
+          {
+            "node": "Extraer Link XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Link PDF": {
+      "main": [
+        [
+          {
+            "node": "Merge Links PDF y XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Link XML": {
+      "main": [
+        [
+          {
+            "node": "Merge Links PDF y XML",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Links PDF y XML": {
+      "main": [
+        [
+          {
+            "node": "Consolidar Para Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidar Para Sheets": {
+      "main": [
+        [
+          {
+            "node": "Agregar Fila Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

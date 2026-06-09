@@ -71,12 +71,15 @@ La facturación electrónica en Colombia es obligatoria desde 2020 (Resolución 
               │                         │
     ┌─────────▼─────────┐   ┌──────────▼──────────┐
     │   NIVEL 1: N8n    │   │ NIVEL 2: LangChain  │
-    │   (Flujo visual)  │   │ (Agente ReAct)      │
+    │ (33 nodos visual) │   │ (Agente ReAct)      │
     │                   │   │                     │
-    │ • Schedule Trigger│   │ • GPT-4o            │
+    │ • Manual Trigger  │   │ • GPT-4o            │
     │ • IMAP Read       │   │ • 3 Tools custom    │
-    │ • Code Node (XML) │   │ • AgentExecutor     │
-    │ • Google Sheets   │   │ • LCEL Chain        │
+    │ • ZIP Extraction  │   │ • create_react_agent│
+    │ • XML Parser UBL  │   │ • LCEL Chain        │
+    │ • OpenAI GPT-4o   │   │                     │
+    │ • Google Drive    │   │                     │
+    │ • Google Sheets   │   │                     │
     └─────────┬─────────┘   └──────────┬──────────┘
               │                         │
               └────────────┬────────────┘
@@ -96,28 +99,50 @@ La facturación electrónica en Colombia es obligatoria desde 2020 (Resolución 
 ## DIAPOSITIVA 04 — N8n: DESCRIPCIÓN DEL PIPELINE
 
 ### Nodo Trigger
-- **Tipo:** Dual — Manual Trigger + Schedule Trigger (cada 5 minutos)
-- **Configuración:** Cron `*/5 * * * *` para ejecución periódica automática
+- **Tipo:** Manual Trigger (para pruebas y ejecución bajo demanda)
+- **Configuración:** Inicio manual; escalable a Schedule Trigger (`*/5 * * * *`) para producción
 
-### Nodos de Procesamiento
-1. **IMAP Email Read:** Conecta al servidor mail.suprokom.com:993 (SSL), lee correos no leídos y los marca como leídos
-2. **Code Node — Extraer Adjuntos:** JavaScript que identifica archivos ZIP en los binarios del correo
-3. **IF Node — ¿Tiene ZIP?:** Condicional que filtra correos sin adjuntos
-4. **Code Node — Descomprimir y Parsear XML:** JavaScript con JSZip + xml2js que:
-   - Descomprime el ZIP
+### Etapa 1: Lectura y Extracción de Correos
+1. **Leer Correos No Leídos (IMAP):** Conecta al servidor mail.suprokom.com:993 (SSL), lee correos UNSEEN, descarga adjuntos y los marca como leídos
+2. **Separar Adjuntos (Code):** JavaScript que itera binarios del correo, extrae metadata (remitente, asunto, fecha, messageId) y genera un item por archivo adjunto
+3. **Es Archivo ZIP? (IF):** Condicional que bifurca el flujo según extensión del archivo
+4. **Extraer Archivos ZIP (Compression):** Descomprime archivos ZIP nativamente
+5. **Separar Archivos ZIP (Code):** Separa archivos internos del ZIP, preserva metadata del correo original
+6. **Combinar Archivos (Merge):** Une en un solo flujo los archivos directos y los extraídos de ZIP
+7. **Filtrar PDF y XML (IF):** Solo permite pasar archivos con extensión `.pdf` o `.xml`
+
+### Etapa 2: Parseo y Validación con IA
+8. **Parsear XML UBL 2.1 (Code):** Parser especializado que:
    - Detecta formato AttachedDocument vs Invoice directo
-   - Extrae NIT, razón social, número de factura, fecha, total y descripción
+   - Decodifica CDATA y entidades HTML del XML embebido
+   - Extrae: NIT emisor, razón social, número factura, fecha, valor total, descripción
+   - Agrupa XML+PDF del mismo correo por emailMessageId
+9. **Preparar Prompt OpenAI (Code):** Construye payload JSON para GPT-4o con system prompt de validación y datos extraídos del XML
+10. **Llamar API OpenAI (HTTP Request):** Invoca `POST https://api.openai.com/v1/chat/completions` con modelo gpt-4o, temperature=0
+11. **Procesar Respuesta OpenAI (Code):** Parsea JSON de respuesta, limpia markdown residual, normaliza valor_total a float, genera nombre de carpeta
 
-### Nodo de Salida
-- **Google Sheets:** Registra cada factura como fila nueva con todos los campos extraídos
+### Etapa 3: Organización en Google Drive
+12. **Buscar Carpeta Raíz (HTTP):** Busca carpeta "Facturas Suprokom" en Drive vía API
+13. **Crear Carpeta Raíz (Google Drive):** Solo si no existe, crea la carpeta raíz
+14. **Buscar Carpeta Archivos (HTTP):** Busca subcarpeta "Archivos Facturas" dentro de la raíz
+15. **Crear Carpeta Archivos Facturas (Google Drive):** Solo si no existe
+16. **Crear Carpeta Factura Número (Google Drive):** Carpeta individual por factura (ej: `Factura_FE-1234_2026-06-08`)
+17. **Subir PDF a Drive + Subir XML a Drive:** Carga paralela de ambos archivos a la carpeta de la factura
+18. **Extraer Links:** Obtiene webViewLink de cada archivo subido
+
+### Etapa 4: Registro en Google Sheets
+19. **Consolidar Para Sheets (Code):** Arma objeto final con 15 campos: nit, razón social, número, fecha, valor, descripción, tipo documento, remitente, fecha correo, nombre PDF/XML, links Drive, carpeta y fecha procesamiento
+20. **Agregar Fila Google Sheets:** Inserta fila en hoja "Facturas" con todos los campos
 
 ### Métricas generales
 | Métrica | Valor |
 |---|---|
-| Número de nodos | 7 |
-| Tipo de trigger | Schedule (5 min) + Manual |
-| Tiempo promedio de ejecución | ~8 segundos por correo |
+| Número de nodos | 33 |
+| Tipo de trigger | Manual (escalable a Schedule 5 min) |
+| Tiempo promedio de ejecución | ~12 segundos por factura |
 | Tasa de éxito en parseo | ~95% (facturas UBL 2.1 estándar) |
+| Integraciones externas | IMAP, OpenAI GPT-4o, Google Drive API, Google Sheets |
+| Campos registrados por factura | 15 |
 
 [INSERTAR CAPTURA DE PANTALLA DEL FLUJO ACTIVO CON TODOS LOS NODOS VISIBLES]
 
@@ -126,28 +151,42 @@ La facturación electrónica en Colombia es obligatoria desde 2020 (Resolución 
 ## DIAPOSITIVA 05 — N8n: PASO A PASO
 
 ### Paso 1: Acceso a N8n
-Acceder a la instancia de N8n (local con Docker o n8n.cloud). Crear un nuevo workflow en blanco.
+Acceder a la instancia de N8n (local con Docker o n8n.cloud). Crear un nuevo workflow en blanco. Importar el JSON del flujo o construirlo manualmente.
 
 ### Paso 2: Creación del Workflow
-Nombrar el workflow "Agente Facturación Electrónica" y configurar los settings de ejecución.
+Nombrar el workflow "Agente Facturas Electronicas". Configurar execution order en "v1" (secuencial). Agregar el nodo Manual Trigger como punto de entrada.
 
-### Paso 3: Configuración del Trigger
-Agregar dos triggers:
-- Manual Trigger (para pruebas)
-- Schedule Trigger con intervalo de 5 minutos
+### Paso 3: Configuración de Credenciales
+Configurar 4 credenciales:
+- **IMAP:** host `mail.suprokom.com`, puerto 993, SSL, usuario y contraseña
+- **OpenAI API:** API Key para acceso a GPT-4o
+- **Google Drive OAuth2:** Permisos de lectura/escritura en Drive
+- **Google Sheets OAuth2:** Permisos de escritura en hojas de cálculo
 
-### Paso 4: Nodos de Procesamiento
+### Paso 4: Nodos de Extracción (Etapa 1)
 Agregar secuencialmente:
-1. IMAP Email Read → configurar host, puerto 993, SSL y credenciales
-2. Code Node → JavaScript para extraer binarios ZIP
-3. IF Node → condición `has_zip === true`
-4. Code Node → JSZip + xml2js para parsear factura
+1. IMAP Email Read → filtro UNSEEN, descargar adjuntos, marcar como leídos
+2. Code Node "Separar Adjuntos" → un item por archivo con metadata del correo
+3. IF Node "Es Archivo ZIP?" → bifurca por extensión
+4. Compression Node → descomprime ZIP (rama true)
+5. Code Node "Separar Archivos ZIP" → separa contenido del ZIP
+6. Merge Node "Combinar Archivos" → une ambas ramas
+7. IF Node "Filtrar PDF y XML" → solo extensiones pdf/xml pasan
 
-### Paso 5: Nodo de Salida
-Conectar Google Sheets con las columnas: nit_emisor, razon_social, numero_factura, fecha_emision, valor_total, descripcion, archivo_pdf, archivo_xml
+### Paso 5: Nodos de Procesamiento IA + Drive + Sheets (Etapas 2-4)
+8. Code Node "Parsear XML UBL 2.1" → extracción de campos de factura colombiana
+9. Code Node "Preparar Prompt" → payload para GPT-4o
+10. HTTP Request → llamada a OpenAI API
+11. Code Node "Procesar Respuesta" → limpieza y normalización
+12-18. Nodos Google Drive → creación idempotente de carpetas + subida de archivos
+19-20. Consolidar + Google Sheets → registro final con 15 campos y links a Drive
 
-### Paso 6: Activación
-Activar el workflow con el toggle. Verificar que el Schedule Trigger está funcionando. Ejecutar manualmente para prueba.
+### Paso 6: Prueba y Activación
+Ejecutar manualmente con el botón "Execute Workflow". Verificar que:
+- Los correos se leen y marcan como leídos
+- Los archivos se suben a la carpeta correcta en Drive
+- La fila aparece en Google Sheets con todos los campos
+- Activar Schedule Trigger para ejecución automática en producción
 
 [INSERTAR CAPTURAS DE PANTALLA DE CADA PASO]
 
@@ -156,15 +195,45 @@ Activar el workflow con el toggle. Verificar que el Schedule Trigger está funci
 ## DIAPOSITIVA 06 — N8n: VIDEO + JSON
 
 ### Video
-📹 **Enlace:** [INSERTAR LINK DE GOOGLE DRIVE]
+📹 **Enlace:** https://drive.google.com/file/d/1KqoDINIcPC7abigeDx9iTSRv5-kuuJrv/view?usp=drive_link
 - Duración: 3-8 minutos
 - Contenido: Creación y ejecución del flujo en tiempo real con narración
 
 ### JSON del flujo
-El archivo JSON exportado se encuentra en el repositorio:
-📎 https://github.com/sevalenciaca/taller-final-sistemas-inteligentes/blob/main/flujo_facturas_n8n.json
+El flujo exportado contiene 33 nodos y está disponible en el repositorio en dos versiones:
+- 📎 **Flujo completo (Drive+Sheets):** https://github.com/sevalenciaca/taller-final-sistemas-inteligentes/blob/main/n8n_drive_sheets.json
+- 📎 **Flujo base (solo parseo):** https://github.com/sevalenciaca/taller-final-sistemas-inteligentes/blob/main/flujo_facturas_n8n.json
 
-[INSERTAR BLOQUE JSON O REFERENCIA AL ARCHIVO]
+### Estructura del flujo (resumen de nodos)
+```
+Inicio Manual → IMAP Read → Separar Adjuntos → ¿ZIP? 
+  ├─ SI → Descomprimir → Separar archivos ZIP ─┐
+  └─ NO ─────────────────────────────────────────┤
+                                                  ▼
+                                          Combinar Archivos
+                                                  │
+                                          Filtrar PDF/XML
+                                                  │
+                                       Parsear XML UBL 2.1
+                                                  │
+                                     Preparar Prompt OpenAI
+                                                  │
+                                       Llamar API GPT-4o
+                                                  │
+                                    Procesar Respuesta OpenAI
+                                                  │
+                                ┌─ Buscar/Crear Carpeta Raíz
+                                ├─ Buscar/Crear Carpeta Archivos  
+                                ├─ Crear Carpeta por Factura
+                                ├─ Subir PDF ──→ Extraer Link PDF ─┐
+                                ├─ Subir XML ──→ Extraer Link XML ─┤
+                                │                                   ▼
+                                │                          Merge Links
+                                │                              │
+                                └──── Consolidar Para Sheets ──┘
+                                                  │
+                                      Agregar Fila Google Sheets
+```
 
 ---
 
@@ -338,9 +407,11 @@ El sistema difuso actúa como post-procesador del agente LangChain:
 ### Hallazgos por nivel
 
 **Nivel 1 (N8n):**
-- La automatización visual permite prototipar rápidamente flujos de integración
-- Limitación: la lógica de parseo XML compleja requiere Code Nodes extensos
-- Fortaleza: triggers automáticos y conexión nativa con Google Sheets
+- Flujo de 33 nodos probado exitosamente con datos reales del buzón de Suprokom
+- La integración OpenAI dentro de N8n permite validar y normalizar datos extraídos del XML sin código adicional
+- La gestión idempotente de carpetas en Google Drive evita duplicados
+- Limitación: la lógica de parseo XML compleja requiere Code Nodes extensos (>50 líneas)
+- Fortaleza: ejecución end-to-end sin intervención humana (correo → Drive + Sheets)
 
 **Nivel 2 (LangChain):**
 - El paradigma de agentes ReAct permite autonomía en la toma de decisiones
